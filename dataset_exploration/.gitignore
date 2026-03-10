@@ -1,0 +1,13 @@
+artifacts/
+.venv/
+**__pycache__/
+.idea/
+.vscode/
+figures/
+models/
+AGENTS.md
+available data.png
+missing data.png
+dataset_page.html
+ireland_data/
+figure.html

@@ -1,0 +1,24 @@
+# Core data stack
+numpy>=1.24
+pandas>=2.1
+scipy>=1.10
+
+# Visualization (used by plotting scripts)
+matplotlib>=3.8
+seaborn>=0.13
+plotly>=5.20
+
+# ML / DL
+torch>=2.2
+scikit-learn>=1.4
+lightgbm>=4.3
+xgboost>=2.0
+tqdm>=4.66
+
+# Utilities
+pytz>=2024.1
+h5py>=3.10
+
+# Optional (for true GPU-side XGBoost predict/fit with CuPy arrays):
+# Install the variant matching your CUDA runtime, e.g.:
+# cupy-cuda12x>=13.0
