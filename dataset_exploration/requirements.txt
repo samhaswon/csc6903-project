@@ -18,6 +18,7 @@ tqdm>=4.66
 # Utilities
 pytz>=2024.1
 h5py>=3.10
+pylint
 
 # Optional (for true GPU-side XGBoost predict/fit with CuPy arrays):
 # Install the variant matching your CUDA runtime, e.g.:

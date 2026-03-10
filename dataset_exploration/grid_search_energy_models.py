@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
+"""Run grid search across neural and tree-based energy forecasting models."""
+
 from __future__ import annotations
 
 import copy
 import json
 from datetime import datetime, timezone
-from pathlib import Path
 
 import torch
 from sklearn.model_selection import ParameterGrid
@@ -306,14 +307,27 @@ def train_neural_trial(
     :return: Dictionary with ``score``, ``val_metrics``, and ``test_metrics``.
     :raises RuntimeError: If datasets are empty or no best state is found.
     """
+    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     train_dataset, val_dataset, test_dataset = datasets
 
     if len(train_dataset) == 0 or len(val_dataset) == 0 or len(test_dataset) == 0:
         raise RuntimeError("At least one split has zero windows.")
 
-    train_loader = create_dataloader(train_dataset, batch_size=model_params["batch_size"], shuffle=True)
-    val_loader = create_dataloader(val_dataset, batch_size=model_params["batch_size"], shuffle=False)
-    test_loader = create_dataloader(test_dataset, batch_size=model_params["batch_size"], shuffle=False)
+    train_loader = create_dataloader(
+        train_dataset,
+        batch_size=model_params["batch_size"],
+        shuffle=True,
+    )
+    val_loader = create_dataloader(
+        val_dataset,
+        batch_size=model_params["batch_size"],
+        shuffle=False,
+    )
+    test_loader = create_dataloader(
+        test_dataset,
+        batch_size=model_params["batch_size"],
+        shuffle=False,
+    )
 
     optimizer = torch.optim.AdamW(
         model.parameters(),
@@ -327,7 +341,11 @@ def train_neural_trial(
     best_val_metrics = None
     patience_left = model_params["patience"]
 
-    epoch_progress = tqdm(range(1, model_params["epochs"] + 1), desc=f"{model_name} trial", leave=False)
+    epoch_progress = tqdm(
+        range(1, model_params["epochs"] + 1),
+        desc=f"{model_name} trial",
+        leave=False,
+    )
     for epoch in epoch_progress:
         train_loss = train_one_epoch(
             model,
@@ -405,7 +423,14 @@ def run_rnn_trial(data_params: dict, model_params: dict, cache: dict, device: to
         num_layers=model_params["num_layers"],
         dropout=model_params["dropout"],
     ).to(device)
-    return train_neural_trial("rnn", model, (train_dataset, val_dataset, test_dataset), model_params, stats, device)
+    return train_neural_trial(
+        "rnn",
+        model,
+        (train_dataset, val_dataset, test_dataset),
+        model_params,
+        stats,
+        device,
+    )
 
 
 def run_tcn_trial(data_params: dict, model_params: dict, cache: dict, device: torch.device) -> dict:
@@ -427,10 +452,22 @@ def run_tcn_trial(data_params: dict, model_params: dict, cache: dict, device: to
         kernel_size=model_params["kernel_size"],
         dropout=model_params["dropout"],
     ).to(device)
-    return train_neural_trial("tcn", model, (train_dataset, val_dataset, test_dataset), model_params, stats, device)
+    return train_neural_trial(
+        "tcn",
+        model,
+        (train_dataset, val_dataset, test_dataset),
+        model_params,
+        stats,
+        device,
+    )
 
 
-def run_transformer_trial(data_params: dict, model_params: dict, cache: dict, device: torch.device) -> dict:
+def run_transformer_trial(
+    data_params: dict,
+    model_params: dict,
+    cache: dict,
+    device: torch.device,
+) -> dict:
     """Run one transformer hyperparameter trial.
 
     :param data_params: Data-parameter dictionary.
@@ -511,6 +548,7 @@ def run_xgboost_trial(data_params: dict, model_params: dict, cache: dict) -> dic
     :return: Trial outcome dictionary.
     :raises ImportError: If required XGBoost/CuPy dependencies are unavailable.
     """
+    # pylint: disable=import-outside-toplevel,too-many-locals
     if XGBRegressor is None:
         raise ImportError("xgboost is not installed.")
 
@@ -593,6 +631,7 @@ def enumerate_trials():
 
 def main() -> None:
     """Execute the full cross-model grid search and write result artifacts."""
+    # pylint: disable=too-many-locals
     set_seed(SEED)
     device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
     print(f"Using device for neural models: {device}")
@@ -649,7 +688,7 @@ def main() -> None:
                     "test_metrics": outcome["test_metrics"],
                 }
             )
-        except Exception as exc:
+        except Exception as exc:  # pylint: disable=broad-exception-caught
             result_record.update(
                 {
                     "status": "error",

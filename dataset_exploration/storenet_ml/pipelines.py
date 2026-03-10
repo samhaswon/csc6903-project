@@ -1,11 +1,22 @@
+"""End-to-end data pipeline assembly for StoreNet model training."""
+
 from __future__ import annotations
 
 import numpy as np
 from tqdm.auto import tqdm
 
-from storenet_ml.config import DATA_DIR, INPUT_FEATURES
-from storenet_ml.data_loaders import fit_standardizers_from_paths, load_house_frame, load_weather, split_house_frame
-from storenet_ml.datasets import SlidingWindowDataset, build_sequences_from_frame, build_tabular_examples_from_frame
+from storenet_ml.config import DATA_DIR
+from storenet_ml.data_loaders import (
+    fit_standardizers_from_paths,
+    load_house_frame,
+    load_weather,
+    split_house_frame,
+)
+from storenet_ml.datasets import (
+    SlidingWindowDataset,
+    build_sequences_from_frame,
+    build_tabular_examples_from_frame,
+)
 
 
 def list_energy_paths():
@@ -41,6 +52,7 @@ def build_rnn_datasets(
     :param max_interp_gap: Maximum number of missing minutes to interpolate.
     :return: Tuple ``(train_dataset, val_dataset, test_dataset, stats)``.
     """
+    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     weather = load_weather(max_interp_gap)
     energy_paths = list_energy_paths()
     stats = fit_standardizers_from_paths(
@@ -114,6 +126,7 @@ def build_tabular_splits(
     :return: Tuple ``(x_train, y_train, x_val, y_val, x_test, y_test)``.
     :raises RuntimeError: If any split has no tabular examples.
     """
+    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     weather = load_weather(max_interp_gap)
     energy_paths = list_energy_paths()
 
@@ -130,9 +143,24 @@ def build_tabular_splits(
             train_frac=train_frac,
             val_frac=val_frac,
         )
-        x_train, y_train = build_tabular_examples_from_frame(splits["train"], seq_len, horizon, stride)
-        x_val, y_val = build_tabular_examples_from_frame(splits["val"], seq_len, horizon, stride)
-        x_test, y_test = build_tabular_examples_from_frame(splits["test"], seq_len, horizon, stride)
+        x_train, y_train = build_tabular_examples_from_frame(
+            splits["train"],
+            seq_len,
+            horizon,
+            stride,
+        )
+        x_val, y_val = build_tabular_examples_from_frame(
+            splits["val"],
+            seq_len,
+            horizon,
+            stride,
+        )
+        x_test, y_test = build_tabular_examples_from_frame(
+            splits["test"],
+            seq_len,
+            horizon,
+            stride,
+        )
 
         if len(x_train):
             train_features.append(x_train)
@@ -162,6 +190,9 @@ def build_tabular_splits(
     y_test = combine(test_targets)
 
     if x_train is None or x_val is None or x_test is None:
-        raise RuntimeError("At least one split has zero tabular examples. Reduce seq_len/horizon or adjust splits.")
+        raise RuntimeError(
+            "At least one split has zero tabular examples. "
+            "Reduce seq_len/horizon or adjust splits."
+        )
 
     return x_train, y_train, x_val, y_val, x_test, y_test

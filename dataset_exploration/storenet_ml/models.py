@@ -1,3 +1,5 @@
+"""Neural model definitions for shared multi-house energy forecasting."""
+
 from __future__ import annotations
 
 import torch
@@ -27,6 +29,7 @@ class SharedEnergyRNN(nn.Module):
         :param num_layers: Number of stacked LSTM layers.
         :param dropout: Dropout probability used in recurrent/head layers.
         """
+        # pylint: disable=too-many-arguments,too-many-positional-arguments
         super().__init__()
         rnn_dropout = dropout if num_layers > 1 else 0.0
         self.house_embedding = nn.Embedding(num_houses, house_embedding_dim)
@@ -112,6 +115,7 @@ class SharedEnergyTCN(nn.Module):
         :param kernel_size: Kernel size used in temporal blocks.
         :param dropout: Dropout probability used in the network.
         """
+        # pylint: disable=too-many-arguments,too-many-positional-arguments
         super().__init__()
         self.house_embedding = nn.Embedding(num_houses, house_embedding_dim)
         input_dim = feature_dim + house_embedding_dim
@@ -176,6 +180,7 @@ class SharedEnergyTransformer(nn.Module):
         :param feedforward_dim: Hidden size of feedforward sublayers.
         :param dropout: Dropout probability used in transformer/head layers.
         """
+        # pylint: disable=too-many-arguments,too-many-positional-arguments
         super().__init__()
         self.max_seq_len = max_seq_len
         self.house_embedding = nn.Embedding(num_houses, house_embedding_dim)
@@ -208,7 +213,10 @@ class SharedEnergyTransformer(nn.Module):
         :raises ValueError: If ``seq_len`` exceeds ``max_seq_len``.
         """
         if x.size(1) > self.max_seq_len:
-            raise ValueError(f"Sequence length {x.size(1)} exceeds configured max_seq_len={self.max_seq_len}.")
+            raise ValueError(
+                f"Sequence length {x.size(1)} exceeds configured "
+                f"max_seq_len={self.max_seq_len}."
+            )
 
         house_embedding = self.house_embedding(house_ids)
         repeated_embedding = house_embedding.unsqueeze(1).expand(-1, x.size(1), -1)

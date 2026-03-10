@@ -1,3 +1,5 @@
+"""Dataset utilities for sequence and tabular energy model inputs."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -100,7 +102,11 @@ def split_contiguous_segments(frame: pd.DataFrame) -> list[pd.DataFrame]:
     gap_start = frame["date"].diff().ne(pd.Timedelta(minutes=1))
     gap_start.iloc[0] = True
     segment_ids = gap_start.cumsum()
-    return [segment.reset_index(drop=True) for _, segment in frame.groupby(segment_ids) if not segment.empty]
+    return [
+        segment.reset_index(drop=True)
+        for _, segment in frame.groupby(segment_ids)
+        if not segment.empty
+    ]
 
 
 def build_sequences_from_frame(
@@ -152,6 +158,7 @@ def build_tabular_examples_from_frame(
     :param stride: Step size between window starts.
     :return: Tuple ``(features, targets)`` as float32 arrays.
     """
+    # pylint: disable=too-many-locals
     feature_rows: list[np.ndarray] = []
     target_rows: list[np.ndarray] = []
 

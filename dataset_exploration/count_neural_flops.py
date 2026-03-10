@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+"""Estimate forward-pass FLOPs for the neural energy model variants."""
+
 from __future__ import annotations
 
 import json
@@ -29,7 +31,11 @@ def format_human(value: int) -> str:
     return f"{v:.2f}E"
 
 
-def count_forward_flops(model: torch.nn.Module, x: torch.Tensor, house_ids: torch.Tensor) -> int:
+def count_forward_flops(
+    model: torch.nn.Module,
+    x: torch.Tensor,
+    house_ids: torch.Tensor,
+) -> int:
     """Count forward-pass FLOPs for one model invocation.
 
     :param model: Model to profile.
@@ -38,12 +44,14 @@ def count_forward_flops(model: torch.nn.Module, x: torch.Tensor, house_ids: torc
     :return: Total forward-pass FLOP count.
     :raises RuntimeError: If PyTorch FLOP counter utilities are unavailable.
     """
+    # pylint: disable=import-outside-toplevel
     try:
         from torch.utils.flop_counter import FlopCounterMode
     except Exception as exc:
         raise RuntimeError(
             "PyTorch built-in FLOP counter is unavailable. "
-            "Please use a PyTorch version that provides `torch.utils.flop_counter.FlopCounterMode` (2.0.0+)."
+            "Please use a PyTorch version with "
+            "`torch.utils.flop_counter.FlopCounterMode` (2.0.0+)."
         ) from exc
 
     model.eval()
@@ -54,7 +62,11 @@ def count_forward_flops(model: torch.nn.Module, x: torch.Tensor, house_ids: torc
         return int(counter.get_total_flops())
 
 
-def build_inputs(batch_size: int, seq_len: int, device: torch.device) -> tuple[torch.Tensor, torch.Tensor]:
+def build_inputs(
+    batch_size: int,
+    seq_len: int,
+    device: torch.device,
+) -> tuple[torch.Tensor, torch.Tensor]:
     """Build synthetic tensors matching the model input contract.
 
     :param batch_size: Number of sequences in the synthetic batch.
@@ -62,7 +74,13 @@ def build_inputs(batch_size: int, seq_len: int, device: torch.device) -> tuple[t
     :param device: Device where tensors should be allocated.
     :return: Tuple ``(x, house_ids)``.
     """
-    x = torch.randn(batch_size, seq_len, len(INPUT_FEATURES), device=device, dtype=torch.float32)
+    x = torch.randn(
+        batch_size,
+        seq_len,
+        len(INPUT_FEATURES),
+        device=device,
+        dtype=torch.float32,
+    )
     house_ids = torch.zeros(batch_size, device=device, dtype=torch.long)
     return x, house_ids
 

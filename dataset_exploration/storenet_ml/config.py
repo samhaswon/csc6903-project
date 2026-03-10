@@ -1,3 +1,5 @@
+"""Static configuration constants for data locations and feature schema."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -33,4 +35,3 @@ INPUT_FEATURES = [
 ]
 TARGET_COLUMNS = ["Production(Wh)", "Consumption(Wh)"]
 HOUSE_ORDER = [f"H{i}" for i in range(1, 21)]
-

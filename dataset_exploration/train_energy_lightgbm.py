@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+"""Train and evaluate a shared LightGBM model for energy targets."""
+
 from __future__ import annotations
 
 import json
@@ -13,7 +15,9 @@ from storenet_ml.training import compute_metrics
 try:
     from lightgbm import LGBMRegressor
 except ImportError as exc:
-    raise ImportError("lightgbm is required for this script. Install it with `pip install lightgbm`.") from exc
+    raise ImportError(
+        "lightgbm is required for this script. Install it with `pip install lightgbm`."
+    ) from exc
 
 
 # Training configuration

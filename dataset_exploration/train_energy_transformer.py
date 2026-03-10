@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+"""Train and evaluate a shared transformer for house-level energy targets."""
+
 from __future__ import annotations
 
 import json
@@ -11,7 +13,13 @@ from storenet_ml.config import ARTIFACT_DIR, HOUSE_ORDER, INPUT_FEATURES
 from storenet_ml.datasets import create_dataloader
 from storenet_ml.models import SharedEnergyTransformer
 from storenet_ml.pipelines import build_rnn_datasets
-from storenet_ml.training import collect_predictions, compute_metrics, save_checkpoint, set_seed, train_one_epoch
+from storenet_ml.training import (
+    collect_predictions,
+    compute_metrics,
+    save_checkpoint,
+    set_seed,
+    train_one_epoch,
+)
 
 
 # Training configuration
@@ -64,11 +72,15 @@ def build_config() -> dict:
 
 def main() -> None:
     """Train and evaluate the shared transformer energy model."""
+    # pylint: disable=too-many-locals
     config = build_config()
     set_seed(SEED)
 
     if not torch.cuda.is_available():
-        raise RuntimeError("CUDA is required for this training script, but no CUDA device is available.")
+        raise RuntimeError(
+            "CUDA is required for this training script, "
+            "but no CUDA device is available."
+        )
 
     device = torch.device("cuda")
     print(f"Using device: {device}")

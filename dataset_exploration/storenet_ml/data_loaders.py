@@ -1,3 +1,5 @@
+"""Data loading and preprocessing helpers for StoreNet energy experiments."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -6,7 +8,13 @@ import numpy as np
 import pandas as pd
 from tqdm.auto import tqdm
 
-from storenet_ml.config import DATA_DIR, ENERGY_COLUMNS, INPUT_FEATURES, TARGET_COLUMNS, WEATHER_COLUMNS
+from storenet_ml.config import (
+    DATA_DIR,
+    ENERGY_COLUMNS,
+    INPUT_FEATURES,
+    TARGET_COLUMNS,
+    WEATHER_COLUMNS,
+)
 
 
 @dataclass
@@ -218,6 +226,7 @@ def fit_standardizers_from_paths(
     :param max_interp_gap: Maximum number of missing minutes to interpolate.
     :return: Standardization statistics for features and targets.
     """
+    # pylint: disable=too-many-locals
     feature_rows = 0
     target_rows = 0
     feature_sum = np.zeros(len(INPUT_FEATURES), dtype=np.float64)

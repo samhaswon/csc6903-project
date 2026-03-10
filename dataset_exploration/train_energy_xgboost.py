@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+"""Train and evaluate a shared XGBoost model for energy targets."""
+
 from __future__ import annotations
 
 import json
@@ -13,7 +15,9 @@ from storenet_ml.training import compute_metrics
 try:
     from xgboost import XGBRegressor
 except ImportError as exc:
-    raise ImportError("xgboost is required for this script. Install it with `pip install xgboost`.") from exc
+    raise ImportError(
+        "xgboost is required for this script. Install it with `pip install xgboost`."
+    ) from exc
 
 
 def maybe_to_gpu_arrays(x_train, x_val, x_test, device: str):
@@ -26,6 +30,7 @@ def maybe_to_gpu_arrays(x_train, x_val, x_test, device: str):
     :return: Tuple ``(x_train, x_val, x_test, cp_module_or_none)``.
     :raises ImportError: If CuPy is required but unavailable.
     """
+    # pylint: disable=import-outside-toplevel
     if not str(device).startswith("cuda"):
         return x_train, x_val, x_test, None
 
@@ -64,6 +69,7 @@ DEVICE = "cuda"
 
 def main() -> None:
     """Train and evaluate the shared XGBoost energy model."""
+    # pylint: disable=too-many-locals
     x_train, y_train, x_val, y_val, x_test, y_test = build_tabular_splits(
         seq_len=SEQ_LEN,
         horizon=HORIZON,
@@ -82,7 +88,12 @@ def main() -> None:
         },
     )
 
-    x_train_device, x_val_device, x_test_device, cp = maybe_to_gpu_arrays(x_train, x_val, x_test, DEVICE)
+    x_train_device, x_val_device, x_test_device, cp = maybe_to_gpu_arrays(
+        x_train,
+        x_val,
+        x_test,
+        DEVICE,
+    )
 
     base_model = XGBRegressor(
         objective="reg:squarederror",

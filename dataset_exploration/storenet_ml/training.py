@@ -1,3 +1,5 @@
+"""Training loops, evaluation, and checkpoint helpers for neural models."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -40,6 +42,7 @@ def train_one_epoch(
     :param total_epochs: Total epoch count for progress display.
     :return: Mean training loss for the epoch.
     """
+    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     model.train()
     running_loss = 0.0
     sample_count = 0
@@ -84,6 +87,7 @@ def collect_predictions(
     :param desc: Progress-bar label.
     :return: Tuple ``(mean_loss, predictions, targets)``.
     """
+    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     model.eval()
     running_loss = 0.0
     sample_count = 0
@@ -164,6 +168,7 @@ def save_checkpoint(
     :param checkpoint_name: Filename for the checkpoint.
     :return: Full checkpoint path.
     """
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
     MODEL_DIR.mkdir(exist_ok=True)
     checkpoint_path = MODEL_DIR / checkpoint_name
     payload = {
