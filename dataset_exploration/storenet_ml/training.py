@@ -11,6 +11,10 @@ from storenet_ml.config import HOUSE_ORDER, INPUT_FEATURES, MODEL_DIR, TARGET_CO
 
 
 def set_seed(seed: int) -> None:
+    """Set NumPy and PyTorch random seeds.
+
+    :param seed: Seed value used for RNG initialization.
+    """
     np.random.seed(seed)
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
@@ -25,6 +29,17 @@ def train_one_epoch(
     epoch: int,
     total_epochs: int,
 ) -> float:
+    """Train one epoch and return mean loss.
+
+    :param model: Model to optimize.
+    :param loader: Training dataloader.
+    :param optimizer: Optimizer instance.
+    :param loss_fn: Loss function.
+    :param device: Device used for computation.
+    :param epoch: One-based epoch index.
+    :param total_epochs: Total epoch count for progress display.
+    :return: Mean training loss for the epoch.
+    """
     model.train()
     running_loss = 0.0
     sample_count = 0
@@ -58,6 +73,17 @@ def collect_predictions(
     target_std: np.ndarray,
     desc: str,
 ) -> tuple[float, np.ndarray, np.ndarray]:
+    """Evaluate a model and collect denormalized predictions and targets.
+
+    :param model: Model to evaluate.
+    :param loader: Evaluation dataloader.
+    :param loss_fn: Loss function used for reporting.
+    :param device: Device used for computation.
+    :param target_mean: Target means used for denormalization.
+    :param target_std: Target standard deviations used for denormalization.
+    :param desc: Progress-bar label.
+    :return: Tuple ``(mean_loss, predictions, targets)``.
+    """
     model.eval()
     running_loss = 0.0
     sample_count = 0
@@ -91,6 +117,12 @@ def collect_predictions(
 
 
 def compute_metrics(predictions: np.ndarray, targets: np.ndarray) -> dict[str, float]:
+    """Compute regression metrics for both target columns.
+
+    :param predictions: Predicted target values.
+    :param targets: Ground-truth target values.
+    :return: Dictionary of per-target and joint MAE/RMSE/R2 metrics.
+    """
     errors = predictions - targets
     mae = np.mean(np.abs(errors), axis=0)
     rmse = np.sqrt(np.mean(np.square(errors), axis=0))
@@ -121,6 +153,17 @@ def save_checkpoint(
     target_std: np.ndarray,
     checkpoint_name: str = "shared_energy_rnn.pt",
 ) -> Path:
+    """Save a model checkpoint with configuration and scaler metadata.
+
+    :param model: Trained model to serialize.
+    :param config: Training and model configuration values.
+    :param feature_mean: Feature means used during training.
+    :param feature_std: Feature standard deviations used during training.
+    :param target_mean: Target means used during training.
+    :param target_std: Target standard deviations used during training.
+    :param checkpoint_name: Filename for the checkpoint.
+    :return: Full checkpoint path.
+    """
     MODEL_DIR.mkdir(exist_ok=True)
     checkpoint_path = MODEL_DIR / checkpoint_name
     payload = {

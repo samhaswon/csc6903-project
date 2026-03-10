@@ -36,6 +36,10 @@ SEED = 42
 
 
 def build_config() -> dict:
+    """Assemble the training configuration dictionary.
+
+    :return: Dictionary of data, model, and optimization settings.
+    """
     return {
         "seq_len": SEQ_LEN,
         "horizon": HORIZON,
@@ -59,6 +63,7 @@ def build_config() -> dict:
 
 
 def main() -> None:
+    """Train and evaluate the shared transformer energy model."""
     config = build_config()
     set_seed(SEED)
 

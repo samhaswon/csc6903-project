@@ -17,6 +17,15 @@ except ImportError as exc:
 
 
 def maybe_to_gpu_arrays(x_train, x_val, x_test, device: str):
+    """Move feature matrices to CuPy arrays when GPU XGBoost is requested.
+
+    :param x_train: Training feature matrix.
+    :param x_val: Validation feature matrix.
+    :param x_test: Test feature matrix.
+    :param device: XGBoost device string.
+    :return: Tuple ``(x_train, x_val, x_test, cp_module_or_none)``.
+    :raises ImportError: If CuPy is required but unavailable.
+    """
     if not str(device).startswith("cuda"):
         return x_train, x_val, x_test, None
 
@@ -54,6 +63,7 @@ DEVICE = "cuda"
 
 
 def main() -> None:
+    """Train and evaluate the shared XGBoost energy model."""
     x_train, y_train, x_val, y_val, x_test, y_test = build_tabular_splits(
         seq_len=SEQ_LEN,
         horizon=HORIZON,

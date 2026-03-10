@@ -11,6 +11,8 @@ from storenet_ml.config import DATA_DIR, ENERGY_COLUMNS, INPUT_FEATURES, TARGET_
 
 @dataclass
 class StandardizationStats:
+    """Container for dataset scaling statistics."""
+
     feature_mean: np.ndarray
     feature_std: np.ndarray
     target_mean: np.ndarray
@@ -18,6 +20,12 @@ class StandardizationStats:
 
 
 def strip_and_coerce_numeric(frame: pd.DataFrame, columns: list[str]) -> pd.DataFrame:
+    """Strip whitespace and coerce selected columns to numeric values.
+
+    :param frame: Input dataframe to update in place.
+    :param columns: Column names to coerce.
+    :return: Dataframe with numeric-converted columns.
+    """
     for column in columns:
         frame[column] = pd.to_numeric(
             frame[column].astype("string").str.strip(),
@@ -31,6 +39,13 @@ def interpolate_short_gaps(
     columns: list[str],
     max_interp_gap: int,
 ) -> pd.DataFrame:
+    """Interpolate short missing spans for selected columns.
+
+    :param frame: Dataframe with missing values.
+    :param columns: Columns that should be interpolated.
+    :param max_interp_gap: Maximum gap length to fill.
+    :return: Dataframe with interpolated values.
+    """
     frame[columns] = frame[columns].interpolate(
         method="linear",
         limit=max_interp_gap,
@@ -40,6 +55,11 @@ def interpolate_short_gaps(
 
 
 def add_calendar_features(frame: pd.DataFrame) -> pd.DataFrame:
+    """Add cyclical calendar features derived from the ``date`` column.
+
+    :param frame: Dataframe containing a datetime ``date`` column.
+    :return: Dataframe with sine and cosine calendar features.
+    """
     minutes_of_day = frame["date"].dt.hour * 60 + frame["date"].dt.minute
     day_of_week = frame["date"].dt.dayofweek
     day_of_year = frame["date"].dt.dayofyear
@@ -54,6 +74,11 @@ def add_calendar_features(frame: pd.DataFrame) -> pd.DataFrame:
 
 
 def load_weather(max_interp_gap: int) -> pd.DataFrame:
+    """Load, clean, and interpolate weather data.
+
+    :param max_interp_gap: Maximum number of missing minutes to interpolate.
+    :return: Clean weather dataframe indexed by minute-level timestamps.
+    """
     weather = pd.read_csv(
         DATA_DIR / "weather.csv",
         dtype="string",
@@ -78,6 +103,13 @@ def load_weather(max_interp_gap: int) -> pd.DataFrame:
 
 
 def load_house_frame(energy_path, weather: pd.DataFrame, max_interp_gap: int) -> pd.DataFrame:
+    """Load one house energy file and join it with weather features.
+
+    :param energy_path: Path to a house energy CSV file.
+    :param weather: Preprocessed weather dataframe.
+    :param max_interp_gap: Maximum number of missing minutes to interpolate.
+    :return: Clean merged frame with engineered calendar and house features.
+    """
     frame = pd.read_csv(
         energy_path,
         dtype="string",
@@ -112,6 +144,13 @@ def split_house_frame(
     train_frac: float,
     val_frac: float,
 ) -> dict[str, pd.DataFrame]:
+    """Split a house frame into contiguous train/validation/test portions.
+
+    :param frame: Full house dataframe sorted by time.
+    :param train_frac: Fraction of rows assigned to the train split.
+    :param val_frac: Fraction of rows assigned to the validation split.
+    :return: Mapping with ``train``, ``val``, and ``test`` dataframes.
+    """
     n_rows = len(frame)
     train_end = int(n_rows * train_frac)
     val_end = int(n_rows * (train_frac + val_frac))
@@ -129,6 +168,15 @@ def update_running_stats(
     total_sum: np.ndarray,
     total_sum_sq: np.ndarray,
 ) -> tuple[int, np.ndarray, np.ndarray]:
+    """Update running row-count, sum, and squared-sum statistics.
+
+    :param frame: Dataframe chunk to aggregate.
+    :param columns: Numeric columns to include.
+    :param total_rows: Current cumulative row count.
+    :param total_sum: Current cumulative column sums.
+    :param total_sum_sq: Current cumulative squared column sums.
+    :return: Updated ``(total_rows, total_sum, total_sum_sq)`` tuple.
+    """
     values = frame[columns].to_numpy(dtype=np.float64)
     total_rows += values.shape[0]
     total_sum += values.sum(axis=0)
@@ -141,6 +189,13 @@ def finalize_running_stats(
     total_sum: np.ndarray,
     total_sum_sq: np.ndarray,
 ) -> tuple[np.ndarray, np.ndarray]:
+    """Convert running totals into mean and standard deviation arrays.
+
+    :param total_rows: Number of aggregated rows.
+    :param total_sum: Cumulative column sums.
+    :param total_sum_sq: Cumulative column squared sums.
+    :return: Tuple of ``(mean, std)`` float32 arrays.
+    """
     mean = total_sum / total_rows
     variance = (total_sum_sq / total_rows) - np.square(mean)
     std = np.sqrt(np.clip(variance, 1e-8, None))
@@ -154,6 +209,15 @@ def fit_standardizers_from_paths(
     val_frac: float,
     max_interp_gap: int,
 ) -> StandardizationStats:
+    """Fit feature and target scaling statistics on training splits only.
+
+    :param energy_paths: Iterable of house CSV paths.
+    :param weather: Preprocessed weather dataframe.
+    :param train_frac: Fraction used for training split.
+    :param val_frac: Fraction used for validation split.
+    :param max_interp_gap: Maximum number of missing minutes to interpolate.
+    :return: Standardization statistics for features and targets.
+    """
     feature_rows = 0
     target_rows = 0
     feature_sum = np.zeros(len(INPUT_FEATURES), dtype=np.float64)
@@ -190,4 +254,3 @@ def fit_standardizers_from_paths(
         target_mean=target_mean,
         target_std=target_std,
     )
-

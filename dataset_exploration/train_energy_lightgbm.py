@@ -39,6 +39,7 @@ DEVICE_TYPE = "cpu"
 
 
 def main() -> None:
+    """Train and evaluate the shared LightGBM energy model."""
     x_train, y_train, x_val, y_val, x_test, y_test = build_tabular_splits(
         seq_len=SEQ_LEN,
         horizon=HORIZON,

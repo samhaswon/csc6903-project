@@ -9,6 +9,11 @@ from storenet_ml.datasets import SlidingWindowDataset, build_sequences_from_fram
 
 
 def list_energy_paths():
+    """List house energy CSV paths sorted by numeric house id.
+
+    :return: Sorted list of ``H*_Wh.csv`` paths.
+    :raises FileNotFoundError: If no matching energy files are found.
+    """
     energy_paths = sorted(
         DATA_DIR.glob("H*_Wh.csv"),
         key=lambda path: int(path.stem.split("_")[0][1:]),
@@ -26,6 +31,16 @@ def build_rnn_datasets(
     val_frac: float,
     max_interp_gap: int,
 ):
+    """Build train/val/test sliding-window datasets and normalization stats.
+
+    :param seq_len: Input window length in timesteps.
+    :param horizon: Prediction offset from window end.
+    :param stride: Step size between window starts.
+    :param train_frac: Fraction used for training split.
+    :param val_frac: Fraction used for validation split.
+    :param max_interp_gap: Maximum number of missing minutes to interpolate.
+    :return: Tuple ``(train_dataset, val_dataset, test_dataset, stats)``.
+    """
     weather = load_weather(max_interp_gap)
     energy_paths = list_energy_paths()
     stats = fit_standardizers_from_paths(
@@ -88,6 +103,17 @@ def build_tabular_splits(
     val_frac: float,
     max_interp_gap: int,
 ):
+    """Build flattened train/val/test arrays for tree-based models.
+
+    :param seq_len: Input window length in timesteps.
+    :param horizon: Prediction offset from window end.
+    :param stride: Step size between window starts.
+    :param train_frac: Fraction used for training split.
+    :param val_frac: Fraction used for validation split.
+    :param max_interp_gap: Maximum number of missing minutes to interpolate.
+    :return: Tuple ``(x_train, y_train, x_val, y_val, x_test, y_test)``.
+    :raises RuntimeError: If any split has no tabular examples.
+    """
     weather = load_weather(max_interp_gap)
     energy_paths = list_energy_paths()
 
@@ -119,6 +145,11 @@ def build_tabular_splits(
             test_targets.append(y_test)
 
     def combine(parts):
+        """Concatenate arrays in ``parts`` or return ``None`` when empty.
+
+        :param parts: List of numpy arrays for one split.
+        :return: Concatenated array or ``None``.
+        """
         if not parts:
             return None
         return np.concatenate(parts, axis=0)

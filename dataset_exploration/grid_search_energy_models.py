@@ -116,15 +116,30 @@ XGBOOST_GRID = {
 
 
 def stable_params(params: dict) -> dict:
+    """Return a JSON-stable copy of a parameter dictionary.
+
+    :param params: Arbitrary parameter mapping.
+    :return: Deterministic JSON-serializable mapping.
+    """
     return json.loads(json.dumps(params, sort_keys=True, default=str))
 
 
 def trial_id(model_name: str, params: dict) -> str:
+    """Build a stable identifier for one grid-search trial.
+
+    :param model_name: Model family name.
+    :param params: Combined data/model parameter mapping.
+    :return: Stable JSON string used as trial id.
+    """
     payload = {"model": model_name, "params": stable_params(params)}
     return json.dumps(payload, sort_keys=True, separators=(",", ":"))
 
 
 def load_previous_results() -> list[dict]:
+    """Load all prior result records from the JSONL results file.
+
+    :return: List of result dictionaries.
+    """
     if not RESULTS_PATH.exists():
         return []
 
@@ -139,6 +154,12 @@ def load_previous_results() -> list[dict]:
 
 
 def should_skip(existing: dict[str, dict], current_trial_id: str) -> bool:
+    """Decide whether a trial should be skipped.
+
+    :param existing: Latest result records keyed by trial id.
+    :param current_trial_id: Trial id for the candidate run.
+    :return: ``True`` when this trial should be skipped.
+    """
     previous = existing.get(current_trial_id)
     if previous is None:
         return False
@@ -148,12 +169,21 @@ def should_skip(existing: dict[str, dict], current_trial_id: str) -> bool:
 
 
 def append_result(result: dict) -> None:
+    """Append one result record to the JSONL results file.
+
+    :param result: Trial result dictionary.
+    """
     ARTIFACT_DIR.mkdir(exist_ok=True)
     with RESULTS_PATH.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(result, sort_keys=True) + "\n")
 
 
 def latest_results(results: list[dict]) -> list[dict]:
+    """Keep only the latest record for each trial id.
+
+    :param results: Chronological list of result records.
+    :return: De-duplicated latest records keyed by trial id.
+    """
     by_id = {}
     for result in results:
         by_id[result["trial_id"]] = result
@@ -161,6 +191,10 @@ def latest_results(results: list[dict]) -> list[dict]:
 
 
 def write_summary(results: list[dict]) -> None:
+    """Write a summary JSON file with best trial per model family.
+
+    :param results: Result records collected so far.
+    """
     current_results = latest_results(results)
     successful = [result for result in current_results if result.get("status") == "ok"]
     summary = {
@@ -189,6 +223,11 @@ def write_summary(results: list[dict]) -> None:
 
 
 def neural_data_key(data_params: dict) -> tuple:
+    """Build a hashable cache key for neural-data pipeline parameters.
+
+    :param data_params: Data-parameter dictionary.
+    :return: Tuple key suitable for dictionary caching.
+    """
     return (
         data_params["seq_len"],
         data_params["horizon"],
@@ -200,10 +239,21 @@ def neural_data_key(data_params: dict) -> tuple:
 
 
 def tabular_data_key(data_params: dict) -> tuple:
+    """Build a hashable cache key for tabular-data pipeline parameters.
+
+    :param data_params: Data-parameter dictionary.
+    :return: Tuple key suitable for dictionary caching.
+    """
     return neural_data_key(data_params)
 
 
 def get_neural_bundle(cache: dict, data_params: dict):
+    """Get or build cached neural datasets for a parameter set.
+
+    :param cache: Cache mapping from data keys to dataset bundles.
+    :param data_params: Data-parameter dictionary.
+    :return: Cached tuple from ``build_rnn_datasets``.
+    """
     key = neural_data_key(data_params)
     if key not in cache:
         cache[key] = build_rnn_datasets(
@@ -218,6 +268,12 @@ def get_neural_bundle(cache: dict, data_params: dict):
 
 
 def get_tabular_bundle(cache: dict, data_params: dict):
+    """Get or build cached tabular arrays for a parameter set.
+
+    :param cache: Cache mapping from data keys to tabular bundles.
+    :param data_params: Data-parameter dictionary.
+    :return: Cached tuple from ``build_tabular_splits``.
+    """
     key = tabular_data_key(data_params)
     if key not in cache:
         cache[key] = build_tabular_splits(
@@ -239,6 +295,17 @@ def train_neural_trial(
     stats,
     device: torch.device,
 ) -> dict:
+    """Train one neural-model trial with early stopping and test evaluation.
+
+    :param model_name: Name used for progress labels.
+    :param model: Initialized model instance.
+    :param datasets: Tuple of ``(train_dataset, val_dataset, test_dataset)``.
+    :param model_params: Hyperparameter dictionary for training.
+    :param stats: Normalization statistics with target mean/std.
+    :param device: Device used for training/evaluation.
+    :return: Dictionary with ``score``, ``val_metrics``, and ``test_metrics``.
+    :raises RuntimeError: If datasets are empty or no best state is found.
+    """
     train_dataset, val_dataset, test_dataset = datasets
 
     if len(train_dataset) == 0 or len(val_dataset) == 0 or len(test_dataset) == 0:
@@ -321,6 +388,14 @@ def train_neural_trial(
 
 
 def run_rnn_trial(data_params: dict, model_params: dict, cache: dict, device: torch.device) -> dict:
+    """Run one RNN hyperparameter trial.
+
+    :param data_params: Data-parameter dictionary.
+    :param model_params: RNN hyperparameter dictionary.
+    :param cache: Dataset cache.
+    :param device: Device used for model training.
+    :return: Trial outcome dictionary.
+    """
     train_dataset, val_dataset, test_dataset, stats = get_neural_bundle(cache, data_params)
     model = SharedEnergyRNN(
         feature_dim=len(INPUT_FEATURES),
@@ -334,6 +409,14 @@ def run_rnn_trial(data_params: dict, model_params: dict, cache: dict, device: to
 
 
 def run_tcn_trial(data_params: dict, model_params: dict, cache: dict, device: torch.device) -> dict:
+    """Run one TCN hyperparameter trial.
+
+    :param data_params: Data-parameter dictionary.
+    :param model_params: TCN hyperparameter dictionary.
+    :param cache: Dataset cache.
+    :param device: Device used for model training.
+    :return: Trial outcome dictionary.
+    """
     train_dataset, val_dataset, test_dataset, stats = get_neural_bundle(cache, data_params)
     model = SharedEnergyTCN(
         feature_dim=len(INPUT_FEATURES),
@@ -348,6 +431,14 @@ def run_tcn_trial(data_params: dict, model_params: dict, cache: dict, device: to
 
 
 def run_transformer_trial(data_params: dict, model_params: dict, cache: dict, device: torch.device) -> dict:
+    """Run one transformer hyperparameter trial.
+
+    :param data_params: Data-parameter dictionary.
+    :param model_params: Transformer hyperparameter dictionary.
+    :param cache: Dataset cache.
+    :param device: Device used for model training.
+    :return: Trial outcome dictionary.
+    """
     train_dataset, val_dataset, test_dataset, stats = get_neural_bundle(cache, data_params)
     model = SharedEnergyTransformer(
         feature_dim=len(INPUT_FEATURES),
@@ -371,6 +462,14 @@ def run_transformer_trial(data_params: dict, model_params: dict, cache: dict, de
 
 
 def run_lightgbm_trial(data_params: dict, model_params: dict, cache: dict) -> dict:
+    """Run one LightGBM hyperparameter trial.
+
+    :param data_params: Data-parameter dictionary.
+    :param model_params: LightGBM hyperparameter dictionary.
+    :param cache: Tabular-data cache.
+    :return: Trial outcome dictionary.
+    :raises ImportError: If LightGBM is not installed.
+    """
     if LGBMRegressor is None:
         raise ImportError("lightgbm is not installed.")
 
@@ -404,6 +503,14 @@ def run_lightgbm_trial(data_params: dict, model_params: dict, cache: dict) -> di
 
 
 def run_xgboost_trial(data_params: dict, model_params: dict, cache: dict) -> dict:
+    """Run one XGBoost hyperparameter trial.
+
+    :param data_params: Data-parameter dictionary.
+    :param model_params: XGBoost hyperparameter dictionary.
+    :param cache: Tabular-data cache.
+    :return: Trial outcome dictionary.
+    :raises ImportError: If required XGBoost/CuPy dependencies are unavailable.
+    """
     if XGBRegressor is None:
         raise ImportError("xgboost is not installed.")
 
@@ -459,6 +566,10 @@ def run_xgboost_trial(data_params: dict, model_params: dict, cache: dict) -> dic
 
 
 def enumerate_trials():
+    """Yield every model/data parameter combination for grid search.
+
+    :return: Generator of ``(model_name, data_params, model_params)`` tuples.
+    """
     for data_params in ParameterGrid(NEURAL_DATA_GRID):
         for model_params in ParameterGrid(RNN_GRID):
             yield "rnn", stable_params(data_params), stable_params(model_params)
@@ -481,6 +592,7 @@ def enumerate_trials():
 
 
 def main() -> None:
+    """Execute the full cross-model grid search and write result artifacts."""
     set_seed(SEED)
     device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
     print(f"Using device for neural models: {device}")

@@ -12,12 +12,16 @@ from storenet_ml.config import INPUT_FEATURES, TARGET_COLUMNS
 
 @dataclass
 class HouseSequence:
+    """Normalized time-series arrays for a single house."""
+
     house_id: int
     features: np.ndarray
     targets: np.ndarray
 
 
 class SlidingWindowDataset(Dataset):
+    """PyTorch dataset that yields sliding windows from house sequences."""
+
     def __init__(
         self,
         sequences: list[HouseSequence],
@@ -25,6 +29,13 @@ class SlidingWindowDataset(Dataset):
         horizon: int,
         stride: int,
     ) -> None:
+        """Initialize a sliding-window dataset.
+
+        :param sequences: House sequences to sample from.
+        :param seq_len: Input window length in timesteps.
+        :param horizon: Prediction offset from the end of each window.
+        :param stride: Step size between window starts.
+        """
         self.sequences = sequences
         self.seq_len = seq_len
         self.horizon = horizon
@@ -36,17 +47,31 @@ class SlidingWindowDataset(Dataset):
         self.cumulative = np.cumsum(self.sample_counts)
 
     def _sample_count(self, series_length: int) -> int:
+        """Compute the number of valid windows for one sequence length.
+
+        :param series_length: Number of timesteps in a sequence.
+        :return: Number of extractable sliding-window samples.
+        """
         usable = series_length - self.seq_len - self.horizon + 1
         if usable <= 0:
             return 0
         return ((usable - 1) // self.stride) + 1
 
     def __len__(self) -> int:
+        """Return the total number of samples across all sequences.
+
+        :return: Dataset length.
+        """
         if len(self.cumulative) == 0:
             return 0
         return int(self.cumulative[-1])
 
     def __getitem__(self, index: int) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Fetch one sample window, target row, and house identifier.
+
+        :param index: Global sample index.
+        :return: Tuple ``(x, y, house_id)`` as PyTorch tensors.
+        """
         seq_index = int(np.searchsorted(self.cumulative, index, side="right"))
         prev_total = 0 if seq_index == 0 else int(self.cumulative[seq_index - 1])
         local_index = index - prev_total
@@ -63,6 +88,11 @@ class SlidingWindowDataset(Dataset):
 
 
 def split_contiguous_segments(frame: pd.DataFrame) -> list[pd.DataFrame]:
+    """Split a frame into contiguous 1-minute segments.
+
+    :param frame: Input dataframe with a ``date`` timestamp column.
+    :return: List of non-empty contiguous segments.
+    """
     if frame.empty:
         return []
 
@@ -80,6 +110,15 @@ def build_sequences_from_frame(
     target_mean: np.ndarray,
     target_std: np.ndarray,
 ) -> list[HouseSequence]:
+    """Create normalized house sequences from contiguous frame segments.
+
+    :param frame: House dataframe to convert.
+    :param feature_mean: Feature means used for normalization.
+    :param feature_std: Feature standard deviations used for normalization.
+    :param target_mean: Target means used for normalization.
+    :param target_std: Target standard deviations used for normalization.
+    :return: List of normalized ``HouseSequence`` objects.
+    """
     sequences: list[HouseSequence] = []
     for segment in split_contiguous_segments(frame):
         feature_values = segment[INPUT_FEATURES].to_numpy(dtype=np.float32)
@@ -105,6 +144,14 @@ def build_tabular_examples_from_frame(
     horizon: int,
     stride: int,
 ) -> tuple[np.ndarray, np.ndarray]:
+    """Build flattened tabular windows and targets from a house frame.
+
+    :param frame: House dataframe to convert.
+    :param seq_len: Input window length in timesteps.
+    :param horizon: Prediction offset from the end of each window.
+    :param stride: Step size between window starts.
+    :return: Tuple ``(features, targets)`` as float32 arrays.
+    """
     feature_rows: list[np.ndarray] = []
     target_rows: list[np.ndarray] = []
 
@@ -135,6 +182,13 @@ def build_tabular_examples_from_frame(
 
 
 def create_dataloader(dataset: SlidingWindowDataset, batch_size: int, shuffle: bool) -> DataLoader:
+    """Create a dataloader for a sliding-window dataset.
+
+    :param dataset: Dataset to iterate.
+    :param batch_size: Number of samples per batch.
+    :param shuffle: Whether to shuffle samples each epoch.
+    :return: Configured PyTorch dataloader.
+    """
     return DataLoader(
         dataset,
         batch_size=batch_size,

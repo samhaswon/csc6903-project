@@ -15,6 +15,11 @@ FLOP_BATCH_SIZE = 1
 
 
 def format_human(value: int) -> str:
+    """Format an integer quantity with engineering suffixes.
+
+    :param value: Raw integer value.
+    :return: Human-readable string using K/M/G/T/P suffixes.
+    """
     suffixes = ["", "K", "M", "G", "T", "P"]
     v = float(value)
     for suffix in suffixes:
@@ -25,6 +30,14 @@ def format_human(value: int) -> str:
 
 
 def count_forward_flops(model: torch.nn.Module, x: torch.Tensor, house_ids: torch.Tensor) -> int:
+    """Count forward-pass FLOPs for one model invocation.
+
+    :param model: Model to profile.
+    :param x: Input tensor for the forward pass.
+    :param house_ids: House-id tensor paired with ``x``.
+    :return: Total forward-pass FLOP count.
+    :raises RuntimeError: If PyTorch FLOP counter utilities are unavailable.
+    """
     try:
         from torch.utils.flop_counter import FlopCounterMode
     except Exception as exc:
@@ -42,12 +55,20 @@ def count_forward_flops(model: torch.nn.Module, x: torch.Tensor, house_ids: torc
 
 
 def build_inputs(batch_size: int, seq_len: int, device: torch.device) -> tuple[torch.Tensor, torch.Tensor]:
+    """Build synthetic tensors matching the model input contract.
+
+    :param batch_size: Number of sequences in the synthetic batch.
+    :param seq_len: Sequence length in timesteps.
+    :param device: Device where tensors should be allocated.
+    :return: Tuple ``(x, house_ids)``.
+    """
     x = torch.randn(batch_size, seq_len, len(INPUT_FEATURES), device=device, dtype=torch.float32)
     house_ids = torch.zeros(batch_size, device=device, dtype=torch.long)
     return x, house_ids
 
 
 def main() -> None:
+    """Estimate forward-pass FLOPs for RNN, TCN, and transformer models."""
     device = torch.device("cpu")
 
     models = {

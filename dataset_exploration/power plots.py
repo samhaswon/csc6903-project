@@ -138,7 +138,17 @@ x=prcnt_availT['available']
 y=prcnt_availT['ID']
 
 def show_values(axs, orient="v", space=.01):
+    """Annotate bar plots with percentage labels.
+
+    :param axs: Matplotlib axis or array of axes.
+    :param orient: Bar orientation, either ``"v"`` or ``"h"``.
+    :param space: Horizontal spacing offset used for horizontal bars.
+    """
     def _single(ax):
+        """Annotate one axis object in place.
+
+        :param ax: Matplotlib axis containing bar patches.
+        """
         if orient == "v":
             for p in ax.patches:
                 _x = p.get_x() + p.get_width() / 2
