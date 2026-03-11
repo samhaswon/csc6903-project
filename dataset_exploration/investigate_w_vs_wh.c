@@ -48,6 +48,27 @@ typedef struct {
     int refine_window;
 } SearchConfig;
 
+typedef struct {
+    size_t compared;
+    size_t within_tolerance;
+    double abs_sum;
+    double sse_sum;
+    double observed_sum;
+    double observed_sq_sum;
+} BucketStats;
+
+typedef struct {
+    int house;
+    ShiftResult score;
+} CrossMatch;
+
+static const char *MONTH_NAMES[12] = {
+    "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+    "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"
+};
+
+static void free_row_buffer(RowBuffer *buffer);
+static bool load_file_rows(const char *path, const int *column_map, RowBuffer *out_buffer);
 static char *duplicate_string(const char *source);
 static bool row_buffer_push(RowBuffer *buffer, const Row *row);
 
@@ -273,6 +294,272 @@ static bool preprocess_like_energy_plots(const RowBuffer *source, RowBuffer *pro
     apply_next_after_invalid_mask(processed);
     forward_fill_columns(processed);
     return true;
+}
+
+static ShiftResult evaluate_shift_combined_pc(
+    const RowBuffer *w_rows,
+    const RowBuffer *wh_rows,
+    int shift,
+    double tolerance
+) {
+    ShiftResult result;
+    size_t i;
+    size_t w_start;
+    size_t wh_start;
+    size_t length;
+    double abs_sum = 0.0;
+    size_t compared = 0U;
+    size_t within = 0U;
+    double observed_sum = 0.0;
+    double observed_sq_sum = 0.0;
+    double sse_sum = 0.0;
+    int fields[2] = {2, 3}; /* Production, Consumption */
+    int fidx;
+
+    result.has_result = false;
+    result.shift = shift;
+    result.compared = 0U;
+    result.mae = 0.0;
+    result.within_tolerance_pct = 0.0;
+    result.r_squared = NAN;
+
+    if (w_rows == NULL || wh_rows == NULL) {
+        return result;
+    }
+
+    if (shift >= 0) {
+        w_start = 0U;
+        wh_start = (size_t)shift;
+        if (wh_start >= wh_rows->count) {
+            return result;
+        }
+        length = w_rows->count;
+        if (wh_rows->count - wh_start < length) {
+            length = wh_rows->count - wh_start;
+        }
+    } else {
+        w_start = (size_t)(-shift);
+        wh_start = 0U;
+        if (w_start >= w_rows->count) {
+            return result;
+        }
+        length = wh_rows->count;
+        if (w_rows->count - w_start < length) {
+            length = w_rows->count - w_start;
+        }
+    }
+
+    for (i = 0; i < length; ++i) {
+        size_t wi = w_start + i;
+        size_t hi = wh_start + i;
+        for (fidx = 0; fidx < 2; ++fidx) {
+            int field_index = fields[fidx];
+            double expected;
+            double observed;
+            double error;
+
+            if (!w_rows->rows[wi].valid[field_index] || !wh_rows->rows[hi].valid[field_index]) {
+                continue;
+            }
+            expected = w_rows->rows[wi].values[field_index] / 60.0;
+            observed = wh_rows->rows[hi].values[field_index];
+            error = observed - expected;
+
+            abs_sum += fabs(error);
+            sse_sum += error * error;
+            observed_sum += observed;
+            observed_sq_sum += observed * observed;
+            compared += 1U;
+            if (fabs(error) <= tolerance) {
+                within += 1U;
+            }
+        }
+    }
+
+    if (compared == 0U) {
+        return result;
+    }
+
+    result.has_result = true;
+    result.compared = compared;
+    result.mae = abs_sum / (double)compared;
+    result.within_tolerance_pct = (100.0 * (double)within) / (double)compared;
+    if (compared > 1U) {
+        double observed_mean = observed_sum / (double)compared;
+        double sst = observed_sq_sum - (double)compared * observed_mean * observed_mean;
+        if (sst > 1e-12) {
+            result.r_squared = 1.0 - (sse_sum / sst);
+        }
+    }
+    return result;
+}
+
+static ShiftResult find_best_shift_combined_pc(
+    const RowBuffer *w_rows,
+    const RowBuffer *wh_rows,
+    int min_shift,
+    int max_shift,
+    double tolerance
+) {
+    int shift;
+    ShiftResult best;
+
+    best.has_result = false;
+    best.shift = 0;
+    best.compared = 0U;
+    best.mae = 0.0;
+    best.within_tolerance_pct = 0.0;
+    best.r_squared = NAN;
+
+    for (shift = min_shift; shift <= max_shift; ++shift) {
+        ShiftResult current = evaluate_shift_combined_pc(w_rows, wh_rows, shift, tolerance);
+        if (!current.has_result) {
+            continue;
+        }
+        if (!best.has_result || current.mae < best.mae ||
+            (fabs(current.mae - best.mae) < 1e-12 && current.r_squared > best.r_squared)) {
+            best = current;
+        }
+    }
+    return best;
+}
+
+static int compare_cross_match(const void *left, const void *right) {
+    const CrossMatch *a = (const CrossMatch *)left;
+    const CrossMatch *b = (const CrossMatch *)right;
+    if (a->score.has_result != b->score.has_result) {
+        return a->score.has_result ? -1 : 1;
+    }
+    if (!a->score.has_result) {
+        return 0;
+    }
+    if (a->score.mae < b->score.mae) {
+        return -1;
+    }
+    if (a->score.mae > b->score.mae) {
+        return 1;
+    }
+    if (a->score.r_squared > b->score.r_squared) {
+        return -1;
+    }
+    if (a->score.r_squared < b->score.r_squared) {
+        return 1;
+    }
+    return (a->house - b->house);
+}
+
+static bool load_house_pair(
+    const char *data_dir,
+    int house,
+    const int *w_columns,
+    const int *wh_columns,
+    RowBuffer *w_rows,
+    RowBuffer *wh_rows
+) {
+    char w_path[1024];
+    char wh_path[1024];
+    snprintf(w_path, sizeof(w_path), "%s/H%d_W.csv", data_dir, house);
+    snprintf(wh_path, sizeof(wh_path), "%s/H%d_Wh.csv", data_dir, house);
+    if (!load_file_rows(w_path, w_columns, w_rows)) {
+        return false;
+    }
+    if (!load_file_rows(wh_path, wh_columns, wh_rows)) {
+        free_row_buffer(w_rows);
+        return false;
+    }
+    return true;
+}
+
+static void print_cross_house_search(
+    const char *data_dir,
+    int target_house,
+    const RowBuffer *target_w_eval,
+    const RowBuffer *target_wh_eval,
+    const int *w_columns,
+    const int *wh_columns,
+    int min_shift,
+    int max_shift,
+    double tolerance,
+    int legacy_mode
+) {
+    int house;
+    CrossMatch w_to_wh[20];
+    CrossMatch wh_to_w[20];
+    int idx = 0;
+
+    for (house = 1; house <= 20; ++house) {
+        RowBuffer cand_w = {0};
+        RowBuffer cand_wh = {0};
+        RowBuffer cand_w_proc = {0};
+        RowBuffer cand_wh_proc = {0};
+        const RowBuffer *cand_w_eval = &cand_w;
+        const RowBuffer *cand_wh_eval = &cand_wh;
+
+        w_to_wh[idx].house = house;
+        w_to_wh[idx].score.has_result = false;
+        wh_to_w[idx].house = house;
+        wh_to_w[idx].score.has_result = false;
+
+        if (load_house_pair(data_dir, house, w_columns, wh_columns, &cand_w, &cand_wh)) {
+            if (legacy_mode) {
+                if (preprocess_like_energy_plots(&cand_w, &cand_w_proc) &&
+                    preprocess_like_energy_plots(&cand_wh, &cand_wh_proc)) {
+                    cand_w_eval = &cand_w_proc;
+                    cand_wh_eval = &cand_wh_proc;
+                }
+            }
+            w_to_wh[idx].score = find_best_shift_combined_pc(
+                target_w_eval, cand_wh_eval, min_shift, max_shift, tolerance
+            );
+            wh_to_w[idx].score = find_best_shift_combined_pc(
+                cand_w_eval, target_wh_eval, min_shift, max_shift, tolerance
+            );
+        }
+
+        free_row_buffer(&cand_w);
+        free_row_buffer(&cand_wh);
+        free_row_buffer(&cand_w_proc);
+        free_row_buffer(&cand_wh_proc);
+        idx += 1;
+    }
+
+    qsort(w_to_wh, 20, sizeof(CrossMatch), compare_cross_match);
+    qsort(wh_to_w, 20, sizeof(CrossMatch), compare_cross_match);
+
+    printf("\nCross-house leakage search (Production+Consumption):\n");
+    printf("Target: H%d, shift range: %d..%d\n", target_house, min_shift, max_shift);
+
+    printf("\nH%d_W vs Hx_Wh (best matches):\n", target_house);
+    for (idx = 0; idx < 8; ++idx) {
+        if (!w_to_wh[idx].score.has_result) {
+            continue;
+        }
+        printf(
+            "  H%-2d_Wh mae=%.6f R2=%.6f shift=%+d n=%zu within=%.2f%%\n",
+            w_to_wh[idx].house,
+            w_to_wh[idx].score.mae,
+            w_to_wh[idx].score.r_squared,
+            w_to_wh[idx].score.shift,
+            w_to_wh[idx].score.compared,
+            w_to_wh[idx].score.within_tolerance_pct
+        );
+    }
+
+    printf("\nH%d_Wh vs Hx_W (best matches):\n", target_house);
+    for (idx = 0; idx < 8; ++idx) {
+        if (!wh_to_w[idx].score.has_result) {
+            continue;
+        }
+        printf(
+            "  H%-2d_W  mae=%.6f R2=%.6f shift=%+d n=%zu within=%.2f%%\n",
+            wh_to_w[idx].house,
+            wh_to_w[idx].score.mae,
+            wh_to_w[idx].score.r_squared,
+            wh_to_w[idx].score.shift,
+            wh_to_w[idx].score.compared,
+            wh_to_w[idx].score.within_tolerance_pct
+        );
+    }
 }
 
 static void free_row_buffer(RowBuffer *buffer) {
@@ -831,6 +1118,375 @@ static ShiftResult find_best_shift(
     return best;
 }
 
+static bool parse_month_index(const char *timestamp, int *month_index) {
+    if (timestamp == NULL || month_index == NULL) {
+        return false;
+    }
+    if (strlen(timestamp) < 8U || timestamp[4] != '-' || timestamp[7] != '-') {
+        return false;
+    }
+    if (timestamp[5] < '0' || timestamp[5] > '1' || timestamp[6] < '0' || timestamp[6] > '9') {
+        return false;
+    }
+    *month_index = ((timestamp[5] - '0') * 10 + (timestamp[6] - '0')) - 1;
+    if (*month_index < 0 || *month_index > 11) {
+        return false;
+    }
+    return true;
+}
+
+static void print_monthly_breakdown(
+    const RowBuffer *w_rows,
+    const RowBuffer *wh_rows,
+    int field_index,
+    int shift,
+    double tolerance
+) {
+    BucketStats monthly[12] = {0};
+    size_t i;
+    size_t w_start;
+    size_t wh_start;
+    size_t length;
+    int month;
+
+    if (w_rows == NULL || wh_rows == NULL || field_index < 0 || field_index >= FIELD_COUNT) {
+        return;
+    }
+
+    if (shift >= 0) {
+        w_start = 0U;
+        wh_start = (size_t)shift;
+        if (wh_start >= wh_rows->count) {
+            return;
+        }
+        length = w_rows->count;
+        if (wh_rows->count - wh_start < length) {
+            length = wh_rows->count - wh_start;
+        }
+    } else {
+        w_start = (size_t)(-shift);
+        wh_start = 0U;
+        if (w_start >= w_rows->count) {
+            return;
+        }
+        length = wh_rows->count;
+        if (w_rows->count - w_start < length) {
+            length = w_rows->count - w_start;
+        }
+    }
+
+    for (i = 0; i < length; ++i) {
+        size_t wi = w_start + i;
+        size_t hi = wh_start + i;
+        double expected;
+        double observed;
+        double error;
+        if (!w_rows->rows[wi].valid[field_index] || !wh_rows->rows[hi].valid[field_index]) {
+            continue;
+        }
+        if (!parse_month_index(wh_rows->rows[hi].timestamp, &month)) {
+            continue;
+        }
+
+        expected = w_rows->rows[wi].values[field_index];
+        if (field_index != 4) {
+            expected /= 60.0;
+        }
+        observed = wh_rows->rows[hi].values[field_index];
+        error = observed - expected;
+
+        monthly[month].compared += 1U;
+        monthly[month].abs_sum += fabs(error);
+        monthly[month].sse_sum += error * error;
+        monthly[month].observed_sum += observed;
+        monthly[month].observed_sq_sum += observed * observed;
+        if (fabs(error) <= tolerance) {
+            monthly[month].within_tolerance += 1U;
+        }
+    }
+
+    printf("\nMonthly breakdown at shift=%+d (%s):\n", shift, FIELD_NAMES[field_index]);
+    for (month = 0; month < 12; ++month) {
+        double mae;
+        double within_pct;
+        double r_squared = NAN;
+        double mean_observed;
+        double sst;
+        if (monthly[month].compared == 0U) {
+            continue;
+        }
+        mae = monthly[month].abs_sum / (double)monthly[month].compared;
+        within_pct = (100.0 * (double)monthly[month].within_tolerance) /
+                     (double)monthly[month].compared;
+        mean_observed = monthly[month].observed_sum / (double)monthly[month].compared;
+        sst = monthly[month].observed_sq_sum -
+              (double)monthly[month].compared * mean_observed * mean_observed;
+        if (sst > 1e-12) {
+            r_squared = 1.0 - (monthly[month].sse_sum / sst);
+        }
+
+        printf(
+            "  %s: n=%zu mae=%.6f R2=%.6f within_tol=%.2f%%\n",
+            MONTH_NAMES[month],
+            monthly[month].compared,
+            mae,
+            r_squared,
+            within_pct
+        );
+    }
+}
+
+static ShiftResult evaluate_shift_combined_pc_month(
+    const RowBuffer *w_rows,
+    const RowBuffer *wh_rows,
+    int shift,
+    double tolerance,
+    int month_filter
+) {
+    ShiftResult result;
+    size_t i;
+    size_t w_start;
+    size_t wh_start;
+    size_t length;
+    double abs_sum = 0.0;
+    size_t compared = 0U;
+    size_t within = 0U;
+    double observed_sum = 0.0;
+    double observed_sq_sum = 0.0;
+    double sse_sum = 0.0;
+    int fields[2] = {2, 3}; /* Production, Consumption */
+    int fidx;
+
+    result.has_result = false;
+    result.shift = shift;
+    result.compared = 0U;
+    result.mae = 0.0;
+    result.within_tolerance_pct = 0.0;
+    result.r_squared = NAN;
+
+    if (w_rows == NULL || wh_rows == NULL) {
+        return result;
+    }
+
+    if (shift >= 0) {
+        w_start = 0U;
+        wh_start = (size_t)shift;
+        if (wh_start >= wh_rows->count) {
+            return result;
+        }
+        length = w_rows->count;
+        if (wh_rows->count - wh_start < length) {
+            length = wh_rows->count - wh_start;
+        }
+    } else {
+        w_start = (size_t)(-shift);
+        wh_start = 0U;
+        if (w_start >= w_rows->count) {
+            return result;
+        }
+        length = wh_rows->count;
+        if (w_rows->count - w_start < length) {
+            length = w_rows->count - w_start;
+        }
+    }
+
+    for (i = 0; i < length; ++i) {
+        size_t wi = w_start + i;
+        size_t hi = wh_start + i;
+        int month_index = -1;
+        if (!parse_month_index(wh_rows->rows[hi].timestamp, &month_index)) {
+            continue;
+        }
+        if (month_filter >= 0 && month_filter != month_index) {
+            continue;
+        }
+        for (fidx = 0; fidx < 2; ++fidx) {
+            int field_index = fields[fidx];
+            double expected;
+            double observed;
+            double error;
+            if (!w_rows->rows[wi].valid[field_index] || !wh_rows->rows[hi].valid[field_index]) {
+                continue;
+            }
+            expected = w_rows->rows[wi].values[field_index] / 60.0;
+            observed = wh_rows->rows[hi].values[field_index];
+            error = observed - expected;
+            abs_sum += fabs(error);
+            sse_sum += error * error;
+            observed_sum += observed;
+            observed_sq_sum += observed * observed;
+            compared += 1U;
+            if (fabs(error) <= tolerance) {
+                within += 1U;
+            }
+        }
+    }
+
+    if (compared == 0U) {
+        return result;
+    }
+
+    result.has_result = true;
+    result.compared = compared;
+    result.mae = abs_sum / (double)compared;
+    result.within_tolerance_pct = (100.0 * (double)within) / (double)compared;
+    if (compared > 1U) {
+        double observed_mean = observed_sum / (double)compared;
+        double sst = observed_sq_sum - (double)compared * observed_mean * observed_mean;
+        if (sst > 1e-12) {
+            result.r_squared = 1.0 - (sse_sum / sst);
+        }
+    }
+    return result;
+}
+
+static ShiftResult find_best_shift_combined_pc_month(
+    const RowBuffer *w_rows,
+    const RowBuffer *wh_rows,
+    int min_shift,
+    int max_shift,
+    double tolerance,
+    int month_filter
+) {
+    int shift;
+    ShiftResult best;
+
+    best.has_result = false;
+    best.shift = 0;
+    best.compared = 0U;
+    best.mae = 0.0;
+    best.within_tolerance_pct = 0.0;
+    best.r_squared = NAN;
+
+    for (shift = min_shift; shift <= max_shift; ++shift) {
+        ShiftResult current = evaluate_shift_combined_pc_month(
+            w_rows, wh_rows, shift, tolerance, month_filter
+        );
+        if (!current.has_result) {
+            continue;
+        }
+        if (!best.has_result || current.mae < best.mae ||
+            (fabs(current.mae - best.mae) < 1e-12 && current.r_squared > best.r_squared)) {
+            best = current;
+        }
+    }
+    return best;
+}
+
+static void print_cross_house_search_monthly(
+    const char *data_dir,
+    int target_house,
+    const RowBuffer *target_w_eval,
+    const RowBuffer *target_wh_eval,
+    const int *w_columns,
+    const int *wh_columns,
+    int min_shift,
+    int max_shift,
+    double tolerance,
+    int legacy_mode
+) {
+    int house;
+    int month;
+    CrossMatch best_w_to_wh[12];
+    CrossMatch best_wh_to_w[12];
+
+    for (month = 0; month < 12; ++month) {
+        best_w_to_wh[month].house = -1;
+        best_w_to_wh[month].score.has_result = false;
+        best_wh_to_w[month].house = -1;
+        best_wh_to_w[month].score.has_result = false;
+    }
+
+    for (house = 1; house <= 20; ++house) {
+        RowBuffer cand_w = {0};
+        RowBuffer cand_wh = {0};
+        RowBuffer cand_w_proc = {0};
+        RowBuffer cand_wh_proc = {0};
+        const RowBuffer *cand_w_eval = &cand_w;
+        const RowBuffer *cand_wh_eval = &cand_wh;
+
+        if (house == target_house) {
+            continue;
+        }
+        if (!load_house_pair(data_dir, house, w_columns, wh_columns, &cand_w, &cand_wh)) {
+            continue;
+        }
+        if (legacy_mode) {
+            if (preprocess_like_energy_plots(&cand_w, &cand_w_proc) &&
+                preprocess_like_energy_plots(&cand_wh, &cand_wh_proc)) {
+                cand_w_eval = &cand_w_proc;
+                cand_wh_eval = &cand_wh_proc;
+            }
+        }
+
+        for (month = 0; month < 12; ++month) {
+            ShiftResult w_to_wh = find_best_shift_combined_pc_month(
+                target_w_eval, cand_wh_eval, min_shift, max_shift, tolerance, month
+            );
+            ShiftResult wh_to_w = find_best_shift_combined_pc_month(
+                cand_w_eval, target_wh_eval, min_shift, max_shift, tolerance, month
+            );
+
+            if (w_to_wh.has_result &&
+                (!best_w_to_wh[month].score.has_result || w_to_wh.mae < best_w_to_wh[month].score.mae ||
+                 (fabs(w_to_wh.mae - best_w_to_wh[month].score.mae) < 1e-12 &&
+                  w_to_wh.r_squared > best_w_to_wh[month].score.r_squared))) {
+                best_w_to_wh[month].house = house;
+                best_w_to_wh[month].score = w_to_wh;
+            }
+            if (wh_to_w.has_result &&
+                (!best_wh_to_w[month].score.has_result || wh_to_w.mae < best_wh_to_w[month].score.mae ||
+                 (fabs(wh_to_w.mae - best_wh_to_w[month].score.mae) < 1e-12 &&
+                  wh_to_w.r_squared > best_wh_to_w[month].score.r_squared))) {
+                best_wh_to_w[month].house = house;
+                best_wh_to_w[month].score = wh_to_w;
+            }
+        }
+
+        free_row_buffer(&cand_w);
+        free_row_buffer(&cand_wh);
+        free_row_buffer(&cand_w_proc);
+        free_row_buffer(&cand_wh_proc);
+    }
+
+    printf("\nCross-house monthly leakage search (best OTHER house per month):\n");
+    printf("Target: H%d, shift range: %d..%d\n", target_house, min_shift, max_shift);
+
+    printf("\nH%d_W vs Hx_Wh (x != %d):\n", target_house, target_house);
+    for (month = 0; month < 12; ++month) {
+        if (!best_w_to_wh[month].score.has_result) {
+            continue;
+        }
+        printf(
+            "  %s -> H%-2d_Wh mae=%.6f R2=%.6f shift=%+d n=%zu within=%.2f%%\n",
+            MONTH_NAMES[month],
+            best_w_to_wh[month].house,
+            best_w_to_wh[month].score.mae,
+            best_w_to_wh[month].score.r_squared,
+            best_w_to_wh[month].score.shift,
+            best_w_to_wh[month].score.compared,
+            best_w_to_wh[month].score.within_tolerance_pct
+        );
+    }
+
+    printf("\nH%d_Wh vs Hx_W (x != %d):\n", target_house, target_house);
+    for (month = 0; month < 12; ++month) {
+        if (!best_wh_to_w[month].score.has_result) {
+            continue;
+        }
+        printf(
+            "  %s -> H%-2d_W  mae=%.6f R2=%.6f shift=%+d n=%zu within=%.2f%%\n",
+            MONTH_NAMES[month],
+            best_wh_to_w[month].house,
+            best_wh_to_w[month].score.mae,
+            best_wh_to_w[month].score.r_squared,
+            best_wh_to_w[month].score.shift,
+            best_wh_to_w[month].score.compared,
+            best_wh_to_w[month].score.within_tolerance_pct
+        );
+    }
+}
+
 static double timestamp_match_pct_for_shift(
     const RowBuffer *w_rows,
     const RowBuffer *wh_rows,
@@ -891,6 +1547,8 @@ int main(int argc, char **argv) {
     int min_shift;
     int max_shift;
     int legacy_mode = 0;
+    int monthly_mode = 0;
+    int cross_mode = 0;
     double tolerance = 0.05;
     char w_path[1024];
     char wh_path[1024];
@@ -902,10 +1560,10 @@ int main(int argc, char **argv) {
     const RowBuffer *wh_eval = &wh_rows;
     int field_index;
 
-    if (argc < 3 || argc > 7) {
+    if (argc < 3 || argc > 9) {
         fprintf(
             stderr,
-            "Usage: %s <data_dir> <house_id> [min_shift] [max_shift] [tolerance] [legacy_mode]\n",
+            "Usage: %s <data_dir> <house_id> [min_shift] [max_shift] [tolerance] [legacy_mode] [monthly_mode] [cross_mode]\n",
             argv[0]
         );
         return 2;
@@ -920,6 +1578,12 @@ int main(int argc, char **argv) {
     }
     if (argc >= 7) {
         legacy_mode = atoi(argv[6]) != 0;
+    }
+    if (argc >= 8) {
+        monthly_mode = atoi(argv[7]) != 0;
+    }
+    if (argc >= 9) {
+        cross_mode = atoi(argv[8]) != 0;
     }
 
     if (min_shift > max_shift) {
@@ -991,6 +1655,39 @@ int main(int argc, char **argv) {
 
     printf("\nTimestamp match (shift -1): %.2f%%\n", timestamp_match_pct_for_shift(w_eval, wh_eval, -1));
     printf("Timestamp match (shift  0): %.2f%%\n", timestamp_match_pct_for_shift(w_eval, wh_eval, 0));
+
+    if (monthly_mode) {
+        print_monthly_breakdown(w_eval, wh_eval, 2, -1, tolerance);
+        print_monthly_breakdown(w_eval, wh_eval, 3, -1, tolerance);
+    }
+    if (cross_mode) {
+        print_cross_house_search(
+            data_dir,
+            atoi(house_id),
+            w_eval,
+            wh_eval,
+            w_columns,
+            wh_columns,
+            min_shift,
+            max_shift,
+            tolerance,
+            legacy_mode
+        );
+        if (monthly_mode) {
+            print_cross_house_search_monthly(
+                data_dir,
+                atoi(house_id),
+                w_eval,
+                wh_eval,
+                w_columns,
+                wh_columns,
+                min_shift,
+                max_shift,
+                tolerance,
+                legacy_mode
+            );
+        }
+    }
 
     free_row_buffer(&w_rows);
     free_row_buffer(&wh_rows);
