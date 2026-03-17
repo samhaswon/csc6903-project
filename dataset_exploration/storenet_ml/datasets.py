@@ -200,7 +200,8 @@ def create_dataloader(dataset: SlidingWindowDataset, batch_size: int, shuffle: b
         dataset,
         batch_size=batch_size,
         shuffle=shuffle,
-        num_workers=0,
+        num_workers=4,
+        persistent_workers=True,
         pin_memory=True,
         drop_last=False,
     )
