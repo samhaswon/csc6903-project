@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 import json
 import shutil
+from pathlib import Path
 import subprocess
 import tempfile
-from dataclasses import dataclass
-from pathlib import Path
+import time
 
 
 VALUE_SHIFT = 1099511627776
@@ -231,21 +232,47 @@ def demo() -> None:
         verification_key_path=Path("build/verification_key.json"),
     )
 
+    # Valid reduction: 100 -> 87 with expected change -12 and tolerance 2
+    proof_start = time.perf_counter()
     statement, bundle = prover.prove(
         first_value=100,
         last_value=87,
         expected_change=-12,
         tolerance=2,
     )
-
+    proof_end = time.perf_counter()
+    verifier_start = time.perf_counter()
     accepted = verifier.verify(bundle)
+    verifier_end = time.perf_counter()
 
+    print("Valid reduction statement:")
     print("Expected change:", statement.expected_change)
     print("Tolerance:", statement.tolerance)
     print("Public signals:", bundle.public_signals)
     print("Accepted:", accepted)
 
+    # Invalid reduction: 100 -> 110 with expected change -10 and tolerance 2
+    print("\nAttempting invalid reduction proof...")
+    try:
+        statement, bundle = prover.prove(
+            first_value=100,
+            last_value=110,
+            expected_change=-12,
+            tolerance=2,
+        )
+    except ZkToolError:
+        print("Proof generation failed for invalid reduction, as expected.")
+    else:
+        accepted = verifier.verify(bundle)
+        print("Invalid reduction statement:")
+        print("Expected change:", statement.expected_change)
+        print("Tolerance:", statement.tolerance)
+        print("Public signals:", bundle.public_signals)
+        print("Accepted:", accepted)
+
     prover.cleanup()
+    print(f"\nProof generation time: {proof_end - proof_start:.2f} seconds")
+    print(f"Verification time: {verifier_end - verifier_start:.2f} seconds")
 
 
 if __name__ == "__main__":

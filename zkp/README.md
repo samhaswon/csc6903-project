@@ -4,7 +4,13 @@ This section of the repository details a zero-knowledge proof of demand reductio
 
 The prover convinces the verifier that the statement is true without revealing the actual data values.
 
-In total, the proof pipeline takes ~1s to prove and verify a statement. 
+In total, the proof pipeline takes ~1s to prove and verify a statement.
+```
+Proof generation time: 0.51 seconds
+Verification time: 0.41 seconds
+```
+
+It would likely be faster in something other than JS on the backend.
 
 ## Problem Statement
 
