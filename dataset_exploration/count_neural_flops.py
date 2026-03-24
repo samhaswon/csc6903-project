@@ -7,13 +7,32 @@ import json
 
 import torch
 
-import train_energy_rnn as rnn_cfg
-import train_energy_tcn as tcn_cfg
-import train_energy_transformer as tf_cfg
 from storenet_ml.config import ARTIFACT_DIR, HOUSE_ORDER, INPUT_FEATURES
 from storenet_ml.models import SharedEnergyRNN, SharedEnergyTCN, SharedEnergyTransformer
 
 FLOP_BATCH_SIZE = 1
+
+# Best configurations from dataset_exploration/artifacts/grid_search_summary.json.
+RNN_SEQ_LEN = 60
+RNN_HIDDEN_SIZE = 128
+RNN_HOUSE_EMBEDDING_DIM = 8
+RNN_NUM_LAYERS = 2
+RNN_DROPOUT = 0.25
+
+TCN_SEQ_LEN = 60
+TCN_HIDDEN_SIZE = 128
+TCN_HOUSE_EMBEDDING_DIM = 8
+TCN_NUM_LAYERS = 8
+TCN_KERNEL_SIZE = 3
+TCN_DROPOUT = 0.15
+
+TRANSFORMER_SEQ_LEN = 60
+TRANSFORMER_D_MODEL = 64
+TRANSFORMER_HOUSE_EMBEDDING_DIM = 8
+TRANSFORMER_NUM_LAYERS = 8
+TRANSFORMER_NUM_HEADS = 4
+TRANSFORMER_FEEDFORWARD_DIM = 96
+TRANSFORMER_DROPOUT = 0.1
 
 
 def format_human(value: int) -> str:
@@ -94,41 +113,41 @@ def main() -> None:
             SharedEnergyRNN(
                 feature_dim=len(INPUT_FEATURES),
                 num_houses=len(HOUSE_ORDER),
-                hidden_size=rnn_cfg.HIDDEN_SIZE,
-                house_embedding_dim=rnn_cfg.HOUSE_EMBEDDING_DIM,
-                num_layers=rnn_cfg.NUM_LAYERS,
-                dropout=rnn_cfg.DROPOUT,
+                hidden_size=RNN_HIDDEN_SIZE,
+                house_embedding_dim=RNN_HOUSE_EMBEDDING_DIM,
+                num_layers=RNN_NUM_LAYERS,
+                dropout=RNN_DROPOUT,
             ).to(device),
             FLOP_BATCH_SIZE,
-            rnn_cfg.SEQ_LEN,
+            RNN_SEQ_LEN,
         ),
         "tcn": (
             SharedEnergyTCN(
                 feature_dim=len(INPUT_FEATURES),
                 num_houses=len(HOUSE_ORDER),
-                hidden_size=tcn_cfg.HIDDEN_SIZE,
-                house_embedding_dim=tcn_cfg.HOUSE_EMBEDDING_DIM,
-                num_layers=tcn_cfg.NUM_LAYERS,
-                kernel_size=tcn_cfg.KERNEL_SIZE,
-                dropout=tcn_cfg.DROPOUT,
+                hidden_size=TCN_HIDDEN_SIZE,
+                house_embedding_dim=TCN_HOUSE_EMBEDDING_DIM,
+                num_layers=TCN_NUM_LAYERS,
+                kernel_size=TCN_KERNEL_SIZE,
+                dropout=TCN_DROPOUT,
             ).to(device),
             FLOP_BATCH_SIZE,
-            tcn_cfg.SEQ_LEN,
+            TCN_SEQ_LEN,
         ),
         "transformer": (
             SharedEnergyTransformer(
                 feature_dim=len(INPUT_FEATURES),
                 num_houses=len(HOUSE_ORDER),
-                max_seq_len=tf_cfg.SEQ_LEN,
-                d_model=tf_cfg.D_MODEL,
-                house_embedding_dim=tf_cfg.HOUSE_EMBEDDING_DIM,
-                num_layers=tf_cfg.NUM_LAYERS,
-                num_heads=tf_cfg.NUM_HEADS,
-                feedforward_dim=tf_cfg.FEEDFORWARD_DIM,
-                dropout=tf_cfg.DROPOUT,
+                max_seq_len=TRANSFORMER_SEQ_LEN,
+                d_model=TRANSFORMER_D_MODEL,
+                house_embedding_dim=TRANSFORMER_HOUSE_EMBEDDING_DIM,
+                num_layers=TRANSFORMER_NUM_LAYERS,
+                num_heads=TRANSFORMER_NUM_HEADS,
+                feedforward_dim=TRANSFORMER_FEEDFORWARD_DIM,
+                dropout=TRANSFORMER_DROPOUT,
             ).to(device),
             FLOP_BATCH_SIZE,
-            tf_cfg.SEQ_LEN,
+            TRANSFORMER_SEQ_LEN,
         ),
     }
 
