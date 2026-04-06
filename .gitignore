@@ -3,3 +3,6 @@
 **__pycache__/
 **.idea/
 **.vscode/
+
+# No idea why codex keeps emitting this file or what it's for, so ignore it
+.codex
