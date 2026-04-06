@@ -5,14 +5,14 @@ from __future__ import annotations
 import numpy as np
 from tqdm.auto import tqdm
 
-from storenet_ml.config import DATA_DIR
-from storenet_ml.data_loaders import (
+from dataset_exploration.storenet_ml.config import DATA_DIR
+from dataset_exploration.storenet_ml.data_loaders import (
     fit_standardizers_from_paths,
     load_house_frame,
     load_weather,
     split_house_frame,
 )
-from storenet_ml.datasets import (
+from dataset_exploration.storenet_ml.datasets import (
     SlidingWindowDataset,
     build_sequences_from_frame,
     build_tabular_examples_from_frame,

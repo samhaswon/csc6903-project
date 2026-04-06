@@ -7,8 +7,8 @@ import json
 
 import torch
 
-from storenet_ml.config import ARTIFACT_DIR, HOUSE_ORDER, INPUT_FEATURES
-from storenet_ml.models import SharedEnergyRNN, SharedEnergyTCN, SharedEnergyTransformer
+from dataset_exploration.storenet_ml.config import ARTIFACT_DIR, HOUSE_ORDER, INPUT_FEATURES
+from dataset_exploration.storenet_ml.models import SharedEnergyRNN, SharedEnergyTCN, SharedEnergyTransformer
 
 FLOP_BATCH_SIZE = 1
 

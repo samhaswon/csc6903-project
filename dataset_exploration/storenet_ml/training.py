@@ -9,7 +9,7 @@ import torch
 from torch import nn
 from tqdm.auto import tqdm
 
-from storenet_ml.config import HOUSE_ORDER, INPUT_FEATURES, MODEL_DIR, TARGET_COLUMNS
+from dataset_exploration.storenet_ml.config import HOUSE_ORDER, INPUT_FEATURES, MODEL_DIR, TARGET_COLUMNS
 
 
 def set_seed(seed: int) -> None:

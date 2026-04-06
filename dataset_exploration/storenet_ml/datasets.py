@@ -9,7 +9,7 @@ import pandas as pd
 import torch
 from torch.utils.data import DataLoader, Dataset
 
-from storenet_ml.config import INPUT_FEATURES, TARGET_COLUMNS
+from dataset_exploration.storenet_ml.config import INPUT_FEATURES, TARGET_COLUMNS
 
 
 @dataclass

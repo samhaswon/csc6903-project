@@ -11,7 +11,7 @@ from typing import Any
 
 import matplotlib.pyplot as plt
 
-from storenet_ml.config import ARTIFACT_DIR, PROJECT_ROOT
+from dataset_exploration.storenet_ml.config import ARTIFACT_DIR, PROJECT_ROOT
 
 DEFAULT_RESULTS_PATH = ARTIFACT_DIR / "grid_search_results.jsonl"
 DEFAULT_SUMMARY_PATH = ARTIFACT_DIR / "top3_params_by_model.json"

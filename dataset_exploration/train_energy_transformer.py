@@ -9,11 +9,11 @@ import torch
 from torch import nn
 from tqdm.auto import tqdm
 
-from storenet_ml.config import ARTIFACT_DIR, HOUSE_ORDER, INPUT_FEATURES
-from storenet_ml.datasets import create_dataloader
-from storenet_ml.models import SharedEnergyTransformer
-from storenet_ml.pipelines import build_rnn_datasets
-from storenet_ml.training import (
+from dataset_exploration.storenet_ml.config import ARTIFACT_DIR, HOUSE_ORDER, INPUT_FEATURES
+from dataset_exploration.storenet_ml.datasets import create_dataloader
+from dataset_exploration.storenet_ml.models import SharedEnergyTransformer
+from dataset_exploration.storenet_ml.pipelines import build_rnn_datasets
+from dataset_exploration.storenet_ml.training import (
     collect_predictions,
     compute_metrics,
     save_checkpoint,

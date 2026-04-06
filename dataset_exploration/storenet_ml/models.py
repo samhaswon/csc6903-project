@@ -5,7 +5,7 @@ from __future__ import annotations
 import torch
 from torch import nn
 
-from storenet_ml.config import TARGET_COLUMNS
+from dataset_exploration.storenet_ml.config import TARGET_COLUMNS
 
 
 class SharedEnergyRNN(nn.Module):

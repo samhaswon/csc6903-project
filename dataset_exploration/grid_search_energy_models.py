@@ -13,11 +13,11 @@ from sklearn.multioutput import MultiOutputRegressor
 from torch import nn
 from tqdm.auto import tqdm
 
-from storenet_ml.config import ARTIFACT_DIR, HOUSE_ORDER, INPUT_FEATURES
-from storenet_ml.datasets import create_dataloader
-from storenet_ml.models import SharedEnergyRNN, SharedEnergyTCN, SharedEnergyTransformer
-from storenet_ml.pipelines import build_rnn_datasets, build_tabular_splits
-from storenet_ml.training import collect_predictions, compute_metrics, set_seed, train_one_epoch
+from dataset_exploration.storenet_ml.config import ARTIFACT_DIR, HOUSE_ORDER, INPUT_FEATURES
+from dataset_exploration.storenet_ml.datasets import create_dataloader
+from dataset_exploration.storenet_ml.models import SharedEnergyRNN, SharedEnergyTCN, SharedEnergyTransformer
+from dataset_exploration.storenet_ml.pipelines import build_rnn_datasets, build_tabular_splits
+from dataset_exploration.storenet_ml.training import collect_predictions, compute_metrics, set_seed, train_one_epoch
 
 try:
     from lightgbm import LGBMRegressor

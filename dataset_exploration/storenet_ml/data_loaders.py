@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 from tqdm.auto import tqdm
 
-from storenet_ml.config import (
+from dataset_exploration.storenet_ml.config import (
     DATA_DIR,
     ENERGY_COLUMNS,
     INPUT_FEATURES,

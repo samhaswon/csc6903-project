@@ -8,9 +8,9 @@ import pickle
 
 from sklearn.multioutput import MultiOutputRegressor
 
-from storenet_ml.config import ARTIFACT_DIR, MODEL_DIR
-from storenet_ml.pipelines import build_tabular_splits
-from storenet_ml.training import compute_metrics
+from dataset_exploration.storenet_ml.config import ARTIFACT_DIR, MODEL_DIR
+from dataset_exploration.storenet_ml.pipelines import build_tabular_splits
+from dataset_exploration.storenet_ml.training import compute_metrics
 
 try:
     from lightgbm import LGBMRegressor
