@@ -11,7 +11,12 @@ git clone --recurse-submodules https://github.com/samhaswon/csc6903-project
 
 [Python](https://www.python.org/downloads/) (~3.10+)
 
-- Dependencies are (currently) in `dataset_exploration/requirements.txt`
+- Dependencies are in `./requirements.txt`, so:
+    ```bash
+    python3 -m pip install -r ./requirements.txt
+    ```
+
+    - If you have an Nvidia GPU, you may wish to install the optional dependency listed at the bottom of the requirements file.
 
 `gcc` or the equivalent for your platform
 

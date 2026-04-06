@@ -20,6 +20,9 @@ pytz>=2024.1
 h5py>=3.10
 pylint
 
+# Dataset pulling
+azure-storage-blob
+
 # Optional (for true GPU-side XGBoost predict/fit with CuPy arrays):
 # Install the variant matching your CUDA runtime, e.g.:
 # cupy-cuda12x>=13.0
