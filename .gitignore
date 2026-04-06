@@ -6,3 +6,6 @@
 
 # No idea why codex keeps emitting this file or what it's for, so ignore it
 .codex
+
+# Old dataset backup
+grid_energy_data.zip
