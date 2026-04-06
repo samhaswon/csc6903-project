@@ -216,7 +216,10 @@ def discover_house_pairs(data_dir: Path) -> Dict[str, Dict[str, Path]]:
     return grouped
 
 
-def compare_house(w_path: Path, wh_path: Path, tolerance: float) -> Tuple[List[str], Dict[str, RunningError]]:
+# pylint: disable=too-many-locals
+def compare_house(
+        w_path: Path, wh_path: Path, tolerance: float
+) -> Tuple[List[str], Dict[str, RunningError]]:
     """Compare one ``_W`` file and one ``_Wh`` file.
 
     :param w_path: Path to power file.
@@ -243,17 +246,12 @@ def compare_house(w_path: Path, wh_path: Path, tolerance: float) -> Tuple[List[s
     lines: List[str] = []
     lines.append(f"W rows={w_stats.row_count:,}, Wh rows={wh_stats.row_count:,}")
     lines.append(
-        "W time range={} -> {} | Wh time range={} -> {}".format(
-            format_dt(w_stats.min_timestamp),
-            format_dt(w_stats.max_timestamp),
-            format_dt(wh_stats.min_timestamp),
-            format_dt(wh_stats.max_timestamp),
-        )
+        f"W time range={format_dt(w_stats.min_timestamp)} -> {format_dt(w_stats.max_timestamp)} | "
+        f"Wh time range={format_dt(wh_stats.min_timestamp)} -> {format_dt(wh_stats.max_timestamp)}"
     )
     lines.append(
-        "timestamps: common={:,}, W_only={:,}, Wh_only={:,}".format(
-            len(common_timestamps), len(w_only_timestamps), len(wh_only_timestamps)
-        )
+        f"timestamps: common={len(common_timestamps):,}, "
+        f"W_only={len(w_only_timestamps):,}, Wh_only={len(wh_only_timestamps):,}"
     )
     lines.append(
         f"bad timestamps: W={w_stats.bad_timestamp_rows}, Wh={wh_stats.bad_timestamp_rows}; "
