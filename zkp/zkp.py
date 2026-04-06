@@ -1,3 +1,6 @@
+"""
+ZKP module for generating and verifying proofs of net change statements using Circom.
+"""
 from __future__ import annotations
 
 from dataclasses import dataclass
