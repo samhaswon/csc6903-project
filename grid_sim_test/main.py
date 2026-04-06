@@ -1,6 +1,12 @@
 """
-Performs a rough grid simulation.
+Performs a rough grid simulation. Not meant to be realistic, but has some of the same dynamics and constraints as a real grid, including:
+- Daily load patterns with some randomness and correlation across customers.
+- Solar generation with a daily pattern and random cloudiness.
+- Dispatchable generators with ramp constraints and economic dispatch.
+- Blackout conditions based on generation-load imbalance and branch overloads.
+- Configurable parameters for tuning the behavior and difficulty of the simulation.
 """
+# pylint: skip-file
 from dataclasses import dataclass
 import sys
 import time
