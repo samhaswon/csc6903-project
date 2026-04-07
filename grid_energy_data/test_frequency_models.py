@@ -824,23 +824,20 @@ def import_storenet_helpers() -> dict[str, Any]:
     :return: Mapping containing imported helper objects.
     """
     project_root = Path(__file__).resolve().parents[1]
-    storenet_root = project_root / "dataset_exploration"
     if str(project_root) not in sys.path:
         sys.path.insert(0, str(project_root))
-    if str(storenet_root) not in sys.path:
-        sys.path.insert(0, str(storenet_root))
 
     # pylint: disable=import-outside-toplevel,import-error
-    from storenet_ml import config as st_config
+    from dataset_exploration.storenet_ml import config as st_config
 
     st_config.TARGET_COLUMNS[:] = ["frequency_hz"]
 
-    from storenet_ml.models import (
+    from dataset_exploration.storenet_ml.models import (
         SharedEnergyRNN,
         SharedEnergyTCN,
         SharedEnergyTransformer,
     )
-    from storenet_ml.training import (
+    from dataset_exploration.storenet_ml.training import (
         collect_predictions,
         set_seed,
         train_one_epoch,
