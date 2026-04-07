@@ -7,6 +7,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import pickle
 import sys
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass
@@ -160,6 +161,12 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         default=Path("grid_energy_data/artifacts/frequency_model_test_results.json"),
         help="Destination JSON path for evaluation results.",
+    )
+    parser.add_argument(
+        "--model-artifacts-dir",
+        type=Path,
+        default=Path("grid_energy_data/artifacts/frequency_model_artifacts"),
+        help="Directory where trained model artifacts are saved.",
     )
     parser.add_argument(
         "--models",
@@ -818,6 +825,8 @@ def import_storenet_helpers() -> dict[str, Any]:
     """
     project_root = Path(__file__).resolve().parents[1]
     storenet_root = project_root / "dataset_exploration"
+    if str(project_root) not in sys.path:
+        sys.path.insert(0, str(project_root))
     if str(storenet_root) not in sys.path:
         sys.path.insert(0, str(storenet_root))
 
@@ -860,6 +869,7 @@ def train_and_eval_neural(
     target_std: np.ndarray,
     device: torch.device,
     num_workers: int,
+    artifact_path: Path | None = None,
 ) -> dict[str, Any]:
     """Train and evaluate one neural model with early stopping.
 
@@ -875,6 +885,7 @@ def train_and_eval_neural(
     :param target_std: Denormalization std array.
     :param device: Computation device.
     :param num_workers: Dataloader worker count.
+    :param artifact_path: Optional destination for serialized best checkpoint.
     :return: Metrics payload for this model.
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
@@ -958,6 +969,21 @@ def train_and_eval_neural(
     if best_state is None or best_val_metrics is None:
         raise RuntimeError(f"{model_name}: no valid checkpoint was produced.")
 
+    saved_artifact = None
+    if artifact_path is not None:
+        artifact_path.parent.mkdir(parents=True, exist_ok=True)
+        torch.save(
+            {
+                "model_name": model_name,
+                "model_params": model_params,
+                "best_state_dict": best_state,
+                "feature_mean": float(target_mean[0]),
+                "feature_std": float(target_std[0]),
+            },
+            artifact_path,
+        )
+        saved_artifact = str(artifact_path.resolve())
+
     model.load_state_dict(best_state)
     model.to(device)
     test_loss, test_predictions, test_targets = collect_predictions(
@@ -978,6 +1004,7 @@ def train_and_eval_neural(
         "val_metrics": best_val_metrics,
         "test_metrics": test_metrics,
         "trained_epochs": int(trained_epochs),
+        "artifact_path": saved_artifact,
     }
 
 
@@ -1049,6 +1076,7 @@ def main() -> None:
     torch.cuda.manual_seed_all(args.seed)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    args.model_artifacts_dir.mkdir(parents=True, exist_ok=True)
     train_values = np.asarray(values[ranges.train_start : ranges.train_end], dtype=np.float32)
     feature_mean = float(np.mean(train_values))
     feature_std = float(np.std(train_values))
@@ -1135,6 +1163,7 @@ def main() -> None:
                     target_std=target_std,
                     device=device,
                     num_workers=args.num_workers,
+                    artifact_path=args.model_artifacts_dir / f"{model_name}_best.pt",
                 )
             elif model_name == "tcn":
                 model = helper["SharedEnergyTCN"](
@@ -1159,6 +1188,7 @@ def main() -> None:
                     target_std=target_std,
                     device=device,
                     num_workers=args.num_workers,
+                    artifact_path=args.model_artifacts_dir / f"{model_name}_best.pt",
                 )
             elif model_name == "transformer":
                 model = helper["SharedEnergyTransformer"](
@@ -1185,6 +1215,7 @@ def main() -> None:
                     target_std=target_std,
                     device=device,
                     num_workers=args.num_workers,
+                    artifact_path=args.model_artifacts_dir / f"{model_name}_best.pt",
                 )
             elif model_name == "lightgbm":
                 if LGBMRegressor is None:
@@ -1233,6 +1264,9 @@ def main() -> None:
                     verbosity=-1,
                 )
                 model.fit(x_train, y_train)
+                artifact_path = args.model_artifacts_dir / f"{model_name}_best.pkl"
+                with artifact_path.open("wb") as handle:
+                    pickle.dump(model, handle, protocol=pickle.HIGHEST_PROTOCOL)
                 val_pred = model.predict(x_val)
                 test_pred = model.predict(x_test)
                 val_metrics = regression_metrics(val_pred, y_val)
@@ -1242,6 +1276,7 @@ def main() -> None:
                     "score": float(val_metrics["mae"]),
                     "val_metrics": val_metrics,
                     "test_metrics": test_metrics,
+                    "artifact_path": str(artifact_path.resolve()),
                 }
             elif model_name == "xgboost":
                 if XGBRegressor is None:
@@ -1295,6 +1330,9 @@ def main() -> None:
                     n_jobs=-1,
                 )
                 model.fit(x_train, y_train)
+                artifact_path = args.model_artifacts_dir / f"{model_name}_best.pkl"
+                with artifact_path.open("wb") as handle:
+                    pickle.dump(model, handle, protocol=pickle.HIGHEST_PROTOCOL)
                 val_pred = model.predict(x_val)
                 test_pred = model.predict(x_test)
                 val_metrics = regression_metrics(val_pred, y_val)
@@ -1305,6 +1343,7 @@ def main() -> None:
                     "val_metrics": val_metrics,
                     "test_metrics": test_metrics,
                     "resolved_device": str(xgb_params["device"]),
+                    "artifact_path": str(artifact_path.resolve()),
                 }
             else:
                 raise ValueError(f"Unhandled model name: {model_name}")
