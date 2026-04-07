@@ -26,8 +26,27 @@ git clone --recurse-submodules https://github.com/samhaswon/csc6903-project
 
 [Node.js](https://nodejs.org/en/download/current)
 
-- 
-
 - `npm install -g snarkjs`
 
 To install the ZKP dependency, see: https://docs.circom.io/getting-started/installation
+
+## Assorted Notes
+
+EIA LCOE (2020)
+
+- https://en.wikipedia.org/wiki/Cost_of_electricity_by_source#Bank_of_America_(2023)
+
+| Generation source                | USD$/MWh |
+| :------------------------------- | :------: |
+| Biomass                          |    95    |
+| Coal (ultra-supercritical)       |    76    |
+| Natural Gas (combined cycle)     |    38    |
+| Natural Gas (combustion turbine) |    67    |
+| Nuclear                          |    82    |
+| Solar                            |    36    |
+| Wind                             |    40    |
+
+
+
+
+
