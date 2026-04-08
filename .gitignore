@@ -9,3 +9,7 @@
 
 # Old dataset backup
 original_grid_energy_data.zip
+
+consumer_grid_joint_2020_summary.json
+consumer_grid_joint_2020.csv.gz
+artifacts/
