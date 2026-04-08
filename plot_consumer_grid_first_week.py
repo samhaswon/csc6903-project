@@ -115,7 +115,7 @@ def plot_grid_demand(frame: pd.DataFrame, output_path: Path) -> None:
     apply_time_axis(axis)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(output_path, dpi=150)
+    fig.savefig(output_path, dpi=350)
     plt.close(fig)
 
 
@@ -157,7 +157,7 @@ def plot_consumer_action(frame: pd.DataFrame, output_path: Path) -> None:
     apply_time_axis(axis)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(output_path, dpi=150)
+    fig.savefig(output_path, dpi=350)
     plt.close(fig)
 
 

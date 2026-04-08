@@ -51,7 +51,15 @@ OUTPUT_CSV_PATH = ROOT_ARTIFACT_DIR / "consumer_grid_joint_2020.csv.gz"
 OUTPUT_SUMMARY_JSON_PATH = ROOT_ARTIFACT_DIR / "consumer_grid_joint_2020_summary.json"
 OUTPUT_GZIP_COMPRESSLEVEL = 9
 
-README_LCOE_PATH = Path("README.md")
+LCOE_USD_PER_MWH = {
+    "Biomass": 95.0,
+    "Coal (ultra-supercritical)": 76.0,
+    "Natural Gas (combined cycle)": 38.0,
+    "Natural Gas (combustion turbine)": 67.0,
+    "Nuclear": 82.0,
+    "Solar": 36.0,
+    "Wind": 40.0,
+}
 
 GRID_READ_CHUNKSIZE = 350_000
 GRID_FREQ_INFER_BATCH_SIZE = 8_192
@@ -78,6 +86,7 @@ MAX_REDUCTION_WH_PER_MIN = 250.0
 MAX_REBOUND_WH_PER_MIN = 250.0
 REBOUND_RELEASE_RATE = 0.10
 REBOUND_MAX_CONSUMPTION_FRAC = 0.18
+REBOUND_RAMP_DELTA_WH_PER_MIN = 200.0
 
 BATTERY_CAPACITY_WH = 10_000.0
 BATTERY_MIN_SOC_PCT = 20.0
@@ -86,6 +95,7 @@ BATTERY_SUPPORT_NET_LOAD_FRAC = 0.30
 BATTERY_MAX_REBOUND_WH_PER_MIN = 180.0
 BATTERY_REBOUND_RELEASE_RATE = 0.08
 BATTERY_REBOUND_MAX_CONSUMPTION_FRAC = 0.12
+BATTERY_REBOUND_RAMP_DELTA_WH_PER_MIN = 800.0
 
 DEVICE_ON_THRESHOLD_W = 120.0
 GRID_FREQ_RESPONSE_HZ_PER_MW = 0.00002
@@ -129,54 +139,6 @@ class ConsumerInferenceContext:
     target_std: np.ndarray
     seq_len: int
     device: torch.device
-
-
-def parse_lcoe_table(readme_path: Path) -> dict[str, float]:
-    """Parse the markdown LCOE table from README.
-
-    :param readme_path: README path with the EIA LCOE table.
-    :return: Mapping from generation-source label to USD/MWh value.
-    """
-    lines = readme_path.read_text(encoding="utf-8").splitlines()
-    table_started = False
-    values: dict[str, float] = {}
-    for line in lines:
-        stripped = line.strip()
-        if "Generation source" in stripped and "USD$/MWh" in stripped:
-            table_started = True
-            continue
-        if not table_started:
-            continue
-        if not stripped.startswith("|"):
-            if values:
-                break
-            continue
-        if ":--" in stripped:
-            continue
-        parts = [part.strip() for part in stripped.strip("|").split("|")]
-        if len(parts) != 2:
-            continue
-        source_name, price_raw = parts
-        if source_name.lower() == "generation source":
-            continue
-        try:
-            values[source_name] = float(price_raw)
-        except ValueError:
-            continue
-
-    required = {
-        "Biomass",
-        "Coal (ultra-supercritical)",
-        "Natural Gas (combined cycle)",
-        "Natural Gas (combustion turbine)",
-        "Nuclear",
-        "Solar",
-        "Wind",
-    }
-    missing = sorted(required.difference(values))
-    if missing:
-        raise ValueError(f"Missing LCOE entries in README table: {missing}")
-    return values
 
 
 def load_grid_2020_minute_frame(normalized_dir: Path, chunksize: int) -> pd.DataFrame:
@@ -476,7 +438,7 @@ def apply_generation_merit_reduction(
     are not selected for curtailment.
 
     :param grid_frame: Grid frame with ``generation_*`` columns.
-    :param lcoe: LCOE mapping parsed from README.
+    :param lcoe: LCOE data from README.
     :param demand_original_mw: Original demand vector.
     :param demand_adjusted_mw: Adjusted demand vector.
     :return: Per-column adjusted generation and reduction arrays.
@@ -850,6 +812,8 @@ def simulate_house_response(
     deferred_pool_wh = 0.0
     reduction_pending_wh = 0.0
     battery_debt_wh = 0.0
+    previous_rebound_wh = 0.0
+    previous_battery_rebound_wh = 0.0
     rng = np.random.default_rng(seed=seed)
 
     for index in range(len(grid_timestamps)):
@@ -881,6 +845,10 @@ def simulate_house_response(
                 MAX_REBOUND_WH_PER_MIN,
                 float(predicted_consumption_wh[index]) * REBOUND_MAX_CONSUMPTION_FRAC,
             )
+            rebound_cap = min(
+                rebound_cap,
+                previous_rebound_wh + REBOUND_RAMP_DELTA_WH_PER_MIN,
+            )
             rebound_now = min(
                 deferred_pool_wh,
                 max(deferred_pool_wh * REBOUND_RELEASE_RATE, 0.0),
@@ -888,6 +856,7 @@ def simulate_house_response(
             )
             deferred_pool_wh -= rebound_now
         reduction_rebound_wh[index] = rebound_now
+        previous_rebound_wh = rebound_now
 
         support_now = 0.0
         if trigger[index]:
@@ -907,6 +876,10 @@ def simulate_house_response(
                 BATTERY_MAX_REBOUND_WH_PER_MIN,
                 float(predicted_consumption_wh[index]) * BATTERY_REBOUND_MAX_CONSUMPTION_FRAC,
             )
+            battery_payback_cap = min(
+                battery_payback_cap,
+                previous_battery_rebound_wh + BATTERY_REBOUND_RAMP_DELTA_WH_PER_MIN,
+            )
             battery_payback_now = min(
                 battery_debt_wh,
                 max(battery_debt_wh * BATTERY_REBOUND_RELEASE_RATE, 0.0),
@@ -914,6 +887,7 @@ def simulate_house_response(
             )
             battery_debt_wh -= battery_payback_now
         battery_rebound_wh[index] = battery_payback_now
+        previous_battery_rebound_wh = battery_payback_now
 
     if reduction_pending_wh > 0.0:
         peak_indices = np.flatnonzero(is_peak_or_expensive)
@@ -944,12 +918,19 @@ def simulate_house_response(
                         MAX_REBOUND_WH_PER_MIN,
                         float(predicted_consumption_wh[index]) * REBOUND_MAX_CONSUMPTION_FRAC,
                     )
+                    previous_value = 0.0 if index == 0 else float(reduction_rebound_wh[index - 1])
+                    ramp_headroom = max(
+                        previous_value + REBOUND_RAMP_DELTA_WH_PER_MIN
+                        - float(reduction_rebound_wh[index]),
+                        0.0,
+                    )
                     rebound_remaining_cap = max(
                         rebound_cap - float(reduction_rebound_wh[index]),
                         0.0,
                     )
                     refill = min(
                         per_slot_rebound,
+                        ramp_headroom,
                         rebound_remaining_cap,
                         deferred_pool_wh,
                     )
@@ -961,12 +942,19 @@ def simulate_house_response(
                         float(predicted_consumption_wh[index])
                         * BATTERY_REBOUND_MAX_CONSUMPTION_FRAC,
                     )
+                    previous_value = 0.0 if index == 0 else float(battery_rebound_wh[index - 1])
+                    ramp_headroom = max(
+                        previous_value + BATTERY_REBOUND_RAMP_DELTA_WH_PER_MIN
+                        - float(battery_rebound_wh[index]),
+                        0.0,
+                    )
                     battery_remaining_cap = max(
                         battery_payback_cap - float(battery_rebound_wh[index]),
                         0.0,
                     )
                     refill = min(
                         per_slot_battery,
+                        ramp_headroom,
                         battery_remaining_cap,
                         battery_debt_wh,
                     )
@@ -1084,7 +1072,7 @@ def predict_grid_frequency(
 def main() -> None:
     """Run the full simulation and write output artifacts."""
     # pylint: disable=too-many-locals,too-many-statements,too-many-branches
-    lcoe_values = parse_lcoe_table(README_LCOE_PATH)
+    lcoe_values = dict(LCOE_USD_PER_MWH)
     ROOT_ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
     grid_frame = load_grid_2020_minute_frame(
         normalized_dir=GRID_NORMALIZED_DIR,
@@ -1385,7 +1373,7 @@ def main() -> None:
         "Consumer cost (USD): "
         f"{summary['consumer_total_cost_original_usd']:,.2f} -> "
         f"{summary['consumer_total_cost_adjusted_usd']:,.2f} "
-        f"(savings {summary['consumer_total_cost_savings_usd']:.2f})"
+        f"(savings {summary['consumer_total_cost_savings_usd']:,.2f})"
     )
     print(
         "Grid cost (USD): "
