@@ -14,6 +14,11 @@ scikit-learn>=1.4
 lightgbm>=4.3
 xgboost>=2.0
 tqdm>=4.66
+onnx==1.21.0
+# or just onnxruntime if you don't need GPU support
+onnxruntime-gpu[cuda,cudnn]==1.24.4
+# Go fast on NVIDIA GPUs
+tensorrt-cu12
 
 # Utilities
 pytz>=2024.1
