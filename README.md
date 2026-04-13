@@ -16,6 +16,8 @@ git clone --recurse-submodules https://github.com/samhaswon/csc6903-project
     python3 -m pip install -r ./requirements.txt
     ```
 
+    - If you do not have an Nvidia GPU, there are some notes about alternative packages you may wish to install instead.
+
     - If you have an Nvidia GPU, you may wish to install the optional dependency listed at the bottom of the requirements file.
 
 `gcc` or the equivalent for your platform
@@ -28,7 +30,7 @@ git clone --recurse-submodules https://github.com/samhaswon/csc6903-project
 
 - `npm install -g snarkjs`
 
-To install the ZKP dependency, see: https://docs.circom.io/getting-started/installation
+To install the ZKP dependency, Circom 2, see: https://docs.circom.io/getting-started/installation
 
 ## Assorted Notes
 
