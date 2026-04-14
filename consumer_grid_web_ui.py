@@ -16,6 +16,7 @@ import matplotlib
 import numpy as np
 import pandas as pd
 import torch
+from tqdm import tqdm
 from flask import Flask, jsonify, render_template, request
 
 import plot_consumer_grid_first_week as plot_helpers
@@ -152,7 +153,10 @@ DEFAULT_NUMERIC_OPTIONS = {
 class CachedSimulationData:
     """In-memory inputs reused across week simulations."""
 
-    consumer_context: sim.ConsumerInferenceContext | None
+    consumer_context: sim.ConsumerInferenceContext
+    grid_frame: pd.DataFrame
+    house_inference_data: dict[str, tuple[pd.DataFrame, pd.DataFrame]]
+    house_end_use_frame: dict[str, pd.DataFrame]
     week_ranges: list[tuple[pd.Timestamp, pd.Timestamp]]
     frequency_model: torch.nn.Module
     frequency_mean: float
@@ -160,7 +164,6 @@ class CachedSimulationData:
     frequency_seq_len: int
     device: torch.device
     grid_week_frames: dict[int, pd.DataFrame]
-    house_prediction_week_frames: dict[tuple[str, int], pd.DataFrame]
     house_end_use_week_frames: dict[tuple[str, int], pd.DataFrame]
 
 
@@ -236,30 +239,6 @@ def _build_sim_year_week_ranges(year: int) -> list[tuple[pd.Timestamp, pd.Timest
 
 
 STATIC_WEEK_RANGES = _build_sim_year_week_ranges(sim.SIM_YEAR)
-PRECOMPUTED_REQUIRED_COLUMNS = [
-    "date",
-    "predicted_production_wh",
-    "predicted_consumption_wh",
-    "State of Charge(%)",
-    "Discharge(Wh)",
-]
-END_USE_REQUESTED_COLUMNS = [
-    "date",
-    "cooking_wh",
-    "laundry_wh",
-    "other_plug_wh",
-    "water_heating_wh",
-    "device_hvac_heating_wh",
-    "device_hvac_cooling_wh",
-    "device_water_heater_w",
-    "device_cooker_w",
-    "device_kettle_w",
-    "device_microwave_w",
-    "device_washing_machine_w",
-    "device_dishwasher_w",
-    "device_tumble_dryer_w",
-    "device_misc_event_w",
-]
 
 
 def _slice_frame_for_week(
@@ -279,144 +258,19 @@ def _slice_frame_for_week(
     return frame.loc[mask].copy()
 
 
-def _get_precomputed_prediction_path(house: str) -> Path:
-    """Return path to precomputed prediction CSV for a house.
+def _load_grid_frame_for_year() -> pd.DataFrame:
+    """Load the full simulation-year grid frame once.
 
-    :param house: House identifier.
-    :return: Prediction CSV path.
+    :return: Minute-level grid frame for the configured simulation year.
     """
-    return sim.CONSUMER_INFERRED_DIR / f"{house}_Wh.csv"
-
-
-def _has_precomputed_prediction_file(house: str) -> bool:
-    """Check whether a house has a usable precomputed prediction file.
-
-    :param house: House identifier.
-    :return: True when required columns are present.
-    """
-    path = _get_precomputed_prediction_path(house)
-    if not path.exists():
-        return False
-    header = pd.read_csv(path, nrows=0).columns.tolist()
-    stripped_to_raw = {column.strip(): column for column in header}
-    return all(column in stripped_to_raw for column in PRECOMPUTED_REQUIRED_COLUMNS)
-
-
-def _load_precomputed_predictions_for_week(
-    house: str,
-    week_start: pd.Timestamp,
-    week_end: pd.Timestamp,
-) -> pd.DataFrame | None:
-    """Load precomputed per-house predictions for a selected week only.
-
-    :param house: House identifier.
-    :param week_start: Inclusive week start.
-    :param week_end: Exclusive week end.
-    :return: Week-limited minute-level prediction frame, or None when unavailable.
-    """
-    path = _get_precomputed_prediction_path(house)
-    if not path.exists():
-        return None
-
-    header = pd.read_csv(path, nrows=0).columns.tolist()
-    stripped_to_raw = {column.strip(): column for column in header}
-    if any(column not in stripped_to_raw for column in PRECOMPUTED_REQUIRED_COLUMNS):
-        return None
-
-    usecols = [stripped_to_raw[column] for column in PRECOMPUTED_REQUIRED_COLUMNS]
-    weekly_chunks: list[pd.DataFrame] = []
-    reader = pd.read_csv(path, usecols=usecols, low_memory=False, chunksize=120_000)
-    for chunk in reader:
-        chunk.columns = [column.strip() for column in chunk.columns]
-        timestamps = pd.to_datetime(chunk["date"], errors="coerce", utc=True)
-        valid = timestamps.notna() & (timestamps >= week_start) & (timestamps < week_end)
-        if not valid.any():
-            continue
-        filtered = chunk.loc[valid].copy()
-        filtered["timestamp_utc"] = timestamps.loc[valid]
-        for column in PRECOMPUTED_REQUIRED_COLUMNS[1:]:
-            filtered[column] = pd.to_numeric(filtered[column], errors="coerce")
-        weekly_chunks.append(filtered)
-
-    if not weekly_chunks:
-        return None
-
-    frame = pd.concat(weekly_chunks, ignore_index=True)
-    frame = frame.dropna(subset=["predicted_production_wh", "predicted_consumption_wh"])
-    frame["minute_utc"] = frame["timestamp_utc"].dt.floor("min")
-    frame = frame.groupby("minute_utc", as_index=False).mean(numeric_only=True)
-    return frame.rename(columns={"minute_utc": "timestamp_utc"})
-
-
-def _needs_consumer_inference() -> bool:
-    """Determine if model inference is required for any house.
-
-    :return: True if at least one house lacks precomputed predictions.
-    """
-    if not sim.USE_PRECOMPUTED_CONSUMER_PREDICTIONS:
-        return True
-    for house in sim.HOUSE_IDS:
-        if not _has_precomputed_prediction_file(house):
-            return True
-    return False
-
-
-def _load_grid_week_frame(week_start: pd.Timestamp, week_end: pd.Timestamp) -> pd.DataFrame:
-    """Load and minute-aggregate one week of normalized grid rows.
-
-    :param week_start: Inclusive week start timestamp in UTC.
-    :param week_end: Exclusive week end timestamp in UTC.
-    :return: Minute-level one-week grid frame.
-    """
-    files = sorted(sim.GRID_NORMALIZED_DIR.glob(f"*{sim.SIM_YEAR}*_normalized.csv.gz"))
-    if not files:
-        raise FileNotFoundError(
-            f"No 2020 normalized files found in {sim.GRID_NORMALIZED_DIR}."
-        )
-
-    weekly_chunks: list[pd.DataFrame] = []
-    for path in files:
-        reader = pd.read_csv(path, chunksize=sim.GRID_READ_CHUNKSIZE, low_memory=False)
-        for chunk in reader:
-            if "timestamp_utc" not in chunk.columns:
-                continue
-            timestamps = pd.to_datetime(chunk["timestamp_utc"], errors="coerce", utc=True)
-            valid = timestamps.notna() & (timestamps >= week_start) & (timestamps < week_end)
-            if not valid.any():
-                continue
-            filtered = chunk.loc[valid].copy()
-            filtered["timestamp_utc"] = timestamps.loc[valid]
-
-            numeric_columns = [column for column in filtered.columns if column != "timestamp_utc"]
-            for column in numeric_columns:
-                filtered[column] = pd.to_numeric(filtered[column], errors="coerce")
-            filtered["minute_utc"] = filtered["timestamp_utc"].dt.floor("min")
-            grouped = filtered.groupby("minute_utc", as_index=False)[numeric_columns].mean()
-            weekly_chunks.append(grouped)
-
-    if not weekly_chunks:
-        raise RuntimeError("No week rows were loaded from normalized 2020 grid files.")
-
-    frame = pd.concat(weekly_chunks, ignore_index=True)
-    frame = frame.groupby("minute_utc", as_index=False).mean(numeric_only=True)
-    frame = frame.sort_values("minute_utc").reset_index(drop=True)
-    frame = frame.rename(columns={"minute_utc": "timestamp_utc"})
-
-    if "frequency_hz" not in frame.columns:
-        raise ValueError("Expected 'frequency_hz' in normalized grid data.")
-    frame["frequency_hz"] = frame["frequency_hz"].interpolate(
-        method="linear",
-        limit_direction="both",
+    frame = sim.load_grid_2020_minute_frame(
+        normalized_dir=sim.GRID_NORMALIZED_DIR,
+        chunksize=sim.GRID_READ_CHUNKSIZE,
     )
-
-    frame = sim.enrich_grid_with_raw_fallback(frame)
-    if "demand_tsd" not in frame.columns:
-        raise ValueError("Expected 'demand_tsd' in grid data.")
-
-    frame["demand_tsd"] = pd.to_numeric(frame["demand_tsd"], errors="coerce")
-    frame["demand_tsd"] = frame["demand_tsd"].interpolate(method="linear", limit_direction="both")
-    if frame["demand_tsd"].isna().any():
-        raise RuntimeError("Demand series still has missing values after fallback/interpolation.")
+    timestamps = pd.to_datetime(frame["timestamp_utc"], errors="coerce", utc=True)
+    frame = frame.loc[timestamps.dt.year == sim.SIM_YEAR].copy()
+    frame["timestamp_utc"] = pd.to_datetime(frame["timestamp_utc"], errors="coerce", utc=True)
+    frame = frame.dropna(subset=["timestamp_utc"]).reset_index(drop=True)
     return frame
 
 
@@ -431,9 +285,8 @@ def _load_cache() -> CachedSimulationData:
             return _CACHE
 
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        consumer_context = None
-        if _needs_consumer_inference():
-            consumer_context = sim.load_consumer_inference_context(device=device)
+        consumer_context = sim.load_consumer_inference_context(device=device)
+        grid_frame = _load_grid_frame_for_year()
 
         grid_results = json.loads(sim.GRID_MODEL_RESULTS_PATH.read_text(encoding="utf-8"))
         frequency_seq_len = int(grid_results["data_params"]["seq_len"])
@@ -442,8 +295,31 @@ def _load_cache() -> CachedSimulationData:
             seq_len=frequency_seq_len,
         )
 
+        house_inference_data: dict[str, tuple[pd.DataFrame, pd.DataFrame]] = {}
+        house_end_use_frame: dict[str, pd.DataFrame] = {}
+        for house in tqdm(sim.HOUSE_IDS, desc="Preloading house data", unit="house"):
+            raw_frame, processed_frame = sim.preprocess_house_for_inference(
+                energy_path=sim.CONSUMER_DATA_DIR / f"{house}_Wh.csv",
+                weather=consumer_context.weather_frame,
+                feature_columns=consumer_context.feature_columns,
+            )
+            raw_frame = raw_frame.copy()
+            raw_frame.columns = [column.strip() for column in raw_frame.columns]
+            raw_frame["timestamp_utc"] = pd.to_datetime(
+                raw_frame["date"], errors="coerce", utc=True
+            )
+            processed_frame = processed_frame.copy()
+            processed_frame["timestamp_utc"] = pd.to_datetime(
+                processed_frame["date"], errors="coerce", utc=True
+            )
+            house_inference_data[house] = (raw_frame, processed_frame)
+            house_end_use_frame[house] = sim.load_house_end_use_frame(house=house)
+
         _CACHE = CachedSimulationData(
             consumer_context=consumer_context,
+            grid_frame=grid_frame,
+            house_inference_data=house_inference_data,
+            house_end_use_frame=house_end_use_frame,
             week_ranges=STATIC_WEEK_RANGES,
             frequency_model=frequency_model,
             frequency_mean=frequency_mean,
@@ -451,7 +327,6 @@ def _load_cache() -> CachedSimulationData:
             frequency_seq_len=frequency_seq_len,
             device=device,
             grid_week_frames={},
-            house_prediction_week_frames={},
             house_end_use_week_frames={},
         )
         return _CACHE
@@ -473,7 +348,7 @@ def _get_grid_frame_for_week(
     week_start: pd.Timestamp,
     week_end: pd.Timestamp,
 ) -> pd.DataFrame:
-    """Return cached week grid frame, loading it on first request.
+    """Return cached week grid frame sliced from preloaded year data.
 
     :param cache: Shared simulation cache.
     :param week_number: 1-based week number.
@@ -482,7 +357,8 @@ def _get_grid_frame_for_week(
     :return: Week grid frame copy.
     """
     if week_number not in cache.grid_week_frames:
-        cache.grid_week_frames[week_number] = _load_grid_week_frame(
+        cache.grid_week_frames[week_number] = _slice_frame_for_week(
+            cache.grid_frame,
             week_start=week_start,
             week_end=week_end,
         )
@@ -490,6 +366,8 @@ def _get_grid_frame_for_week(
 
 
 def _infer_house_predictions_for_week(
+    raw_frame: pd.DataFrame,
+    processed_frame: pd.DataFrame,
     house: str,
     context: sim.ConsumerInferenceContext,
     week_start: pd.Timestamp,
@@ -497,22 +375,14 @@ def _infer_house_predictions_for_week(
 ) -> pd.DataFrame:
     """Run consumer-model inference for one house on a selected week only.
 
+    :param raw_frame: Preloaded raw house frame.
+    :param processed_frame: Preloaded processed house frame.
     :param house: House identifier.
     :param context: Shared consumer inference context.
     :param week_start: Inclusive week start.
     :param week_end: Exclusive week end.
     :return: Week-limited minute-level prediction frame.
     """
-    raw_frame, processed_frame = sim.preprocess_house_for_inference(
-        energy_path=sim.CONSUMER_DATA_DIR / f"{house}_Wh.csv",
-        weather=context.weather_frame,
-        feature_columns=context.feature_columns,
-    )
-    processed_frame["timestamp_utc"] = pd.to_datetime(
-        processed_frame["date"],
-        errors="coerce",
-        utc=True,
-    )
     week_processed = processed_frame.loc[
         (processed_frame["timestamp_utc"] >= week_start)
         & (processed_frame["timestamp_utc"] < week_end)
@@ -542,8 +412,6 @@ def _infer_house_predictions_for_week(
             device=context.device,
         )
 
-    raw_frame.columns = [column.strip() for column in raw_frame.columns]
-    raw_frame["timestamp_utc"] = pd.to_datetime(raw_frame["date"], errors="coerce", utc=True)
     raw_week = raw_frame.loc[
         (raw_frame["timestamp_utc"] >= week_start) & (raw_frame["timestamp_utc"] < week_end)
     ].copy()
@@ -577,44 +445,27 @@ def _infer_house_predictions_for_week(
 
 
 def _load_house_end_use_for_week(
+    house_end_use_frame: pd.DataFrame,
     house: str,
     week_start: pd.Timestamp,
     week_end: pd.Timestamp,
 ) -> pd.DataFrame:
     """Load one house's end-use estimates for a selected week only.
 
+    :param house_end_use_frame: Preloaded full-year end-use frame.
     :param house: House identifier.
     :param week_start: Inclusive week start.
     :param week_end: Exclusive week end.
     :return: Week-limited minute-level end-use frame.
     """
-    path = sim.CONSUMER_END_USE_DIR / f"{house}_end_use_estimates.csv"
-    if not path.exists():
-        _ = sim.load_house_end_use_frame(house=house)
-
-    header = pd.read_csv(path, nrows=0).columns.tolist()
-    available = [column for column in END_USE_REQUESTED_COLUMNS if column in header]
-    weekly_chunks: list[pd.DataFrame] = []
-    reader = pd.read_csv(path, usecols=available, low_memory=False, chunksize=120_000)
-    for chunk in reader:
-        timestamps = pd.to_datetime(chunk["date"], errors="coerce", utc=True)
-        valid = timestamps.notna() & (timestamps >= week_start) & (timestamps < week_end)
-        if not valid.any():
-            continue
-        filtered = chunk.loc[valid].copy()
-        filtered["timestamp_utc"] = timestamps.loc[valid]
-        for column in available:
-            if column != "date":
-                filtered[column] = pd.to_numeric(filtered[column], errors="coerce")
-        weekly_chunks.append(filtered)
-
-    if not weekly_chunks:
+    frame = _slice_frame_for_week(
+        house_end_use_frame,
+        week_start=week_start,
+        week_end=week_end,
+    )
+    if frame.empty:
         raise RuntimeError(f"{house}: no end-use rows found for selected week.")
-
-    frame = pd.concat(weekly_chunks, ignore_index=True)
-    frame["minute_utc"] = frame["timestamp_utc"].dt.floor("min")
-    frame = frame.groupby("minute_utc", as_index=False).mean(numeric_only=True)
-    return frame.rename(columns={"minute_utc": "timestamp_utc"})
+    return frame
 
 
 def _get_house_prediction_frame_for_week(
@@ -624,7 +475,7 @@ def _get_house_prediction_frame_for_week(
     week_start: pd.Timestamp,
     week_end: pd.Timestamp,
 ) -> pd.DataFrame:
-    """Return cached per-house prediction frame for one week.
+    """Run and return one house's prediction frame for one week.
 
     :param cache: Shared simulation cache.
     :param house: House identifier.
@@ -633,24 +484,16 @@ def _get_house_prediction_frame_for_week(
     :param week_end: Exclusive week end.
     :return: Week-limited prediction frame.
     """
-    cache_key = (house, week_number)
-    if cache_key not in cache.house_prediction_week_frames:
-        frame = _load_precomputed_predictions_for_week(
-            house=house,
-            week_start=week_start,
-            week_end=week_end,
-        )
-        if frame is None:
-            if cache.consumer_context is None:
-                raise RuntimeError(f"{house}: missing consumer inference context.")
-            frame = _infer_house_predictions_for_week(
-                house=house,
-                context=cache.consumer_context,
-                week_start=week_start,
-                week_end=week_end,
-            )
-        cache.house_prediction_week_frames[cache_key] = frame
-    return cache.house_prediction_week_frames[cache_key].copy()
+    del week_number
+    raw_frame, processed_frame = cache.house_inference_data[house]
+    return _infer_house_predictions_for_week(
+        raw_frame=raw_frame,
+        processed_frame=processed_frame,
+        house=house,
+        context=cache.consumer_context,
+        week_start=week_start,
+        week_end=week_end,
+    )
 
 
 def _get_house_end_use_frame_for_week(
@@ -672,6 +515,7 @@ def _get_house_end_use_frame_for_week(
     cache_key = (house, week_number)
     if cache_key not in cache.house_end_use_week_frames:
         cache.house_end_use_week_frames[cache_key] = _load_house_end_use_for_week(
+            house_end_use_frame=cache.house_end_use_frame[house],
             house=house,
             week_start=week_start,
             week_end=week_end,
@@ -1100,6 +944,7 @@ def _parse_args() -> argparse.Namespace:
 def main() -> None:
     """Run the web server in development or production mode."""
     args = _parse_args()
+    _load_cache()
     if args.prod:
         # pylint: disable=import-outside-toplevel
         from waitress import serve
