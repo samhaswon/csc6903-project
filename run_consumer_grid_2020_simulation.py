@@ -44,10 +44,12 @@ CONSUMER_DATA_DIR = Path("dataset_exploration/ireland_data")
 CONSUMER_INFERRED_DIR = Path("dataset_exploration/ireland_data_inferred")
 CONSUMER_WEATHER_PATH = CONSUMER_DATA_DIR / "weather.csv"
 CONSUMER_MODEL_CHECKPOINT_PATH = Path("dataset_exploration/models/shared_energy_transformer.pt")
+CONSUMER_ONNX_MODEL_PATH = Path("dataset_exploration/models/shared_energy_transformer.onnx")
 CONSUMER_END_USE_DIR = Path("dataset_exploration/artifacts/end_use_estimates")
 HOUSE_IDS = [f"H{i}" for i in range(1, 21)]
 
 OUTPUT_CSV_PATH = ROOT_ARTIFACT_DIR / "consumer_grid_joint_2020.csv.gz"
+OUTPUT_FIRST_WEEK_CSV_PATH = ROOT_ARTIFACT_DIR / "consumer_grid_joint_2020_first_week.csv"
 OUTPUT_SUMMARY_JSON_PATH = ROOT_ARTIFACT_DIR / "consumer_grid_joint_2020_summary.json"
 OUTPUT_GZIP_COMPRESSLEVEL = 9
 
@@ -66,6 +68,8 @@ GRID_FREQ_INFER_BATCH_SIZE = 8_192
 CONSUMER_INFER_BATCH_SIZE = 8_192
 
 USE_PRECOMPUTED_CONSUMER_PREDICTIONS = False
+USE_ONNX_CONSUMER_INFERENCE = False
+CONSUMER_ONNX_PROVIDERS = ["CUDAExecutionProvider", "CPUExecutionProvider"]
 RECOMPUTE_MISSING_END_USE = False
 
 CONSUMER_GROUP_MULTIPLIER = 12000.0
@@ -124,13 +128,53 @@ GENERATION_SOURCE_COLUMNS = [
     "generation_storage",
 ]
 PROTECTED_GENERATION_COLUMNS = {"generation_nuclear"}
+CSV_EXPORT_COLUMNS_TO_DROP = [
+    "demand_england_wales_demand",
+    "demand_embedded_wind_generation",
+    "demand_embedded_wind_capacity",
+    "demand_embedded_solar_generation",
+    "demand_embedded_solar_capacity",
+    "demand_non_bm_stor",
+    "demand_pump_storage_pumping",
+    "demand_scottish_transfer",
+    "demand_ifa_flow",
+    "demand_ifa2_flow",
+    "demand_britned_flow",
+    "demand_moyle_flow",
+    "demand_east_west_flow",
+    "demand_nemo_flow",
+    "demand_nsl_flow",
+    "demand_eleclink_flow",
+    "demand_viking_flow",
+    "demand_greenlink_flow",
+    "generation_low_carbon",
+    "generation_zero_carbon",
+    "generation_renewable",
+    "generation_fossil",
+    "generation_gas_perc",
+    "generation_coal_perc",
+    "generation_nuclear_perc",
+    "generation_wind_perc",
+    "generation_wind_emb_perc",
+    "generation_hydro_perc",
+    "generation_imports_perc",
+    "generation_biomass_perc",
+    "generation_other_perc",
+    "generation_solar_perc",
+    "generation_storage_perc",
+    "generation_generation_perc",
+    "generation_low_carbon_perc",
+    "generation_zero_carbon_perc",
+    "generation_renewable_perc",
+    "generation_fossil_perc",
+]
 
 
 @dataclass
 class ConsumerInferenceContext:
     """Shared consumer-model inference state."""
 
-    model: torch.nn.Module
+    model: torch.nn.Module | None
     weather_frame: pd.DataFrame
     feature_columns: list[str]
     feature_mean: np.ndarray
@@ -139,6 +183,11 @@ class ConsumerInferenceContext:
     target_std: np.ndarray
     seq_len: int
     device: torch.device
+    use_onnx: bool
+    onnx_session: object | None = None
+    onnx_input_x_name: str | None = None
+    onnx_input_house_name: str | None = None
+    onnx_output_name: str | None = None
 
 
 def load_grid_2020_minute_frame(normalized_dir: Path, chunksize: int) -> pd.DataFrame:
@@ -426,6 +475,35 @@ def compute_lcoe_price_series(grid_frame: pd.DataFrame, lcoe: dict[str, float]) 
     )
 
 
+def build_export_frame(grid_frame: pd.DataFrame) -> pd.DataFrame:
+    """Build the final CSV export frame.
+
+    :param grid_frame: Simulation results frame.
+    :return: Frame without internal demand and generation source columns.
+    """
+    return grid_frame.drop(columns=CSV_EXPORT_COLUMNS_TO_DROP, errors="ignore")
+
+
+def build_first_week_export_frame(grid_frame: pd.DataFrame) -> pd.DataFrame:
+    """Build the uncompressed first-week export frame.
+
+    :param grid_frame: Simulation results frame.
+    :return: Frame filtered to the first seven days of timestamps.
+    """
+    export_frame = build_export_frame(grid_frame)
+    if export_frame.empty or "timestamp_utc" not in export_frame.columns:
+        return export_frame.copy()
+
+    timestamps = pd.to_datetime(export_frame["timestamp_utc"], errors="coerce", utc=True)
+    valid_timestamps = timestamps.notna()
+    if not valid_timestamps.any():
+        return export_frame.iloc[0:0].copy()
+
+    first_timestamp = timestamps.loc[valid_timestamps].min()
+    cutoff_timestamp = first_timestamp + pd.Timedelta(days=7)
+    return export_frame.loc[timestamps < cutoff_timestamp].copy()
+
+
 def apply_generation_merit_reduction(
     grid_frame: pd.DataFrame,
     lcoe: dict[str, float],
@@ -512,19 +590,126 @@ def load_consumer_inference_context(device: torch.device) -> ConsumerInferenceCo
         map_location=device,
         weights_only=False,
     )
-    model = build_model_from_checkpoint(checkpoint=checkpoint, device=device)
     weather = load_weather_frame(CONSUMER_WEATHER_PATH)
+
+    common_kwargs = {
+        "weather_frame": weather,
+        "feature_columns": list(checkpoint["feature_columns"]),
+        "feature_mean": np.asarray(checkpoint["feature_mean"], dtype=np.float32),
+        "feature_std": np.asarray(checkpoint["feature_std"], dtype=np.float32),
+        "target_mean": np.asarray(checkpoint["target_mean"], dtype=np.float32),
+        "target_std": np.asarray(checkpoint["target_std"], dtype=np.float32),
+        "seq_len": int(checkpoint["config"]["seq_len"]),
+        "device": device,
+    }
+
+    if USE_ONNX_CONSUMER_INFERENCE:
+        # pylint: disable=import-outside-toplevel
+        try:
+            import onnxruntime as ort
+        except ImportError as exc:
+            raise ImportError(
+                "onnxruntime is required for USE_ONNX_CONSUMER_INFERENCE=True."
+            ) from exc
+
+        if not CONSUMER_ONNX_MODEL_PATH.exists():
+            raise FileNotFoundError(
+                f"Missing ONNX model: {CONSUMER_ONNX_MODEL_PATH}. "
+                "Run dataset_exploration/quantize_energy_transformer_onnx.py first."
+            )
+
+        available = set(ort.get_available_providers())
+        print(f"Available ONNX Runtime providers: {sorted(available)}")
+        providers = [provider for provider in CONSUMER_ONNX_PROVIDERS if provider in available]
+        if not providers:
+            providers = ["CPUExecutionProvider"]
+
+        session_options = ort.SessionOptions()
+        session_options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+
+        session = ort.InferenceSession(
+            str(CONSUMER_ONNX_MODEL_PATH),
+            providers=providers,
+            sess_options=session_options,
+        )
+        inputs = session.get_inputs()
+        if len(inputs) < 2:
+            raise ValueError(
+                f"ONNX model expected 2 inputs, found {len(inputs)}: {CONSUMER_ONNX_MODEL_PATH}"
+            )
+        outputs = session.get_outputs()
+        if not outputs:
+            raise ValueError(f"ONNX model has no outputs: {CONSUMER_ONNX_MODEL_PATH}")
+
+        return ConsumerInferenceContext(
+            model=None,
+            use_onnx=True,
+            onnx_session=session,
+            onnx_input_x_name=inputs[0].name,
+            onnx_input_house_name=inputs[1].name,
+            onnx_output_name=outputs[0].name,
+            **common_kwargs,
+        )
+
+    model = build_model_from_checkpoint(checkpoint=checkpoint, device=device)
     return ConsumerInferenceContext(
         model=model,
-        weather_frame=weather,
-        feature_columns=list(checkpoint["feature_columns"]),
-        feature_mean=np.asarray(checkpoint["feature_mean"], dtype=np.float32),
-        feature_std=np.asarray(checkpoint["feature_std"], dtype=np.float32),
-        target_mean=np.asarray(checkpoint["target_mean"], dtype=np.float32),
-        target_std=np.asarray(checkpoint["target_std"], dtype=np.float32),
-        seq_len=int(checkpoint["config"]["seq_len"]),
-        device=device,
+        use_onnx=False,
+        **common_kwargs,
     )
+
+
+def predict_all_rows_consumer_onnx(
+    context: ConsumerInferenceContext,
+    processed_frame: pd.DataFrame,
+    batch_size: int,
+) -> np.ndarray:
+    """Predict production/consumption using ONNX Runtime for every row.
+
+    :param context: Consumer inference context with ONNX session metadata.
+    :param processed_frame: Model-ready frame.
+    :param batch_size: Batch size.
+    :return: Denormalized predictions with shape ``(n_rows, 2)``.
+    """
+    # pylint: disable=too-many-locals
+    if (
+        context.onnx_session is None
+        or context.onnx_input_x_name is None
+        or context.onnx_input_house_name is None
+        or context.onnx_output_name is None
+    ):
+        raise RuntimeError("ONNX context is not fully initialized.")
+
+    feature_values = processed_frame[context.feature_columns].to_numpy(dtype=np.float32)
+    normalized = (feature_values - context.feature_mean) / context.feature_std
+    row_count = normalized.shape[0]
+    history_offsets = np.arange(context.seq_len, dtype=np.int64) - context.seq_len
+    house_id = int(processed_frame["house_id"].iloc[0])
+    predictions = np.empty((row_count, len(context.target_mean)), dtype=np.float32)
+
+    for batch_start in tqdm(
+        range(0, row_count, batch_size),
+        leave=False,
+        desc=f"{processed_frame['house_name'].iloc[0]} inference (onnx)",
+    ):
+        batch_end = min(batch_start + batch_size, row_count)
+        indices = np.arange(batch_start, batch_end, dtype=np.int64)
+        window_indices = (indices[:, None] + history_offsets[None, :]) % row_count
+        windows = normalized[window_indices].astype(np.float32, copy=False)
+        house_ids = np.full((len(indices),), house_id, dtype=np.int64)
+
+        predicted_norm = context.onnx_session.run(
+            [context.onnx_output_name],
+            {
+                context.onnx_input_x_name: windows,
+                context.onnx_input_house_name: house_ids,
+            },
+        )[0]
+        predictions[batch_start:batch_end] = (
+            predicted_norm * context.target_std + context.target_mean
+        )
+
+    return predictions
 
 
 def _load_precomputed_predictions(house: str) -> pd.DataFrame | None:
@@ -583,18 +768,27 @@ def infer_house_predictions(
         weather=context.weather_frame,
         feature_columns=context.feature_columns,
     )
-    predictions = predict_all_rows(
-        model=context.model,
-        processed_frame=processed_frame,
-        feature_columns=context.feature_columns,
-        feature_mean=context.feature_mean,
-        feature_std=context.feature_std,
-        target_mean=context.target_mean,
-        target_std=context.target_std,
-        seq_len=context.seq_len,
-        batch_size=CONSUMER_INFER_BATCH_SIZE,
-        device=context.device,
-    )
+    if context.use_onnx:
+        predictions = predict_all_rows_consumer_onnx(
+            context=context,
+            processed_frame=processed_frame,
+            batch_size=CONSUMER_INFER_BATCH_SIZE,
+        )
+    else:
+        if context.model is None:
+            raise RuntimeError("Torch consumer model context is not initialized.")
+        predictions = predict_all_rows(
+            model=context.model,
+            processed_frame=processed_frame,
+            feature_columns=context.feature_columns,
+            feature_mean=context.feature_mean,
+            feature_std=context.feature_std,
+            target_mean=context.target_mean,
+            target_std=context.target_std,
+            seq_len=context.seq_len,
+            batch_size=CONSUMER_INFER_BATCH_SIZE,
+            device=context.device,
+        )
     output = append_predictions_to_raw(
         raw_frame=raw_frame,
         processed_frame=processed_frame,
@@ -1295,7 +1489,8 @@ def main() -> None:
         np.float64
     )
 
-    grid_frame.to_csv(
+    export_frame = build_export_frame(grid_frame)
+    export_frame.to_csv(
         OUTPUT_CSV_PATH,
         index=False,
         compression={
@@ -1303,10 +1498,13 @@ def main() -> None:
             "compresslevel": OUTPUT_GZIP_COMPRESSLEVEL,
         },
     )
+    first_week_export_frame = build_first_week_export_frame(grid_frame)
+    first_week_export_frame.to_csv(OUTPUT_FIRST_WEEK_CSV_PATH, index=False)
 
     summary = {
         "sim_year": SIM_YEAR,
         "rows_output": int(len(grid_frame)),
+        "rows_output_first_week": int(len(first_week_export_frame)),
         "consumer_group_multiplier": float(CONSUMER_GROUP_MULTIPLIER),
         "action_effectiveness_probability": float(ACTION_EFFECTIVENESS_PROB),
         "peak_load_threshold_mw": load_threshold,
@@ -1358,6 +1556,7 @@ def main() -> None:
             np.nansum(consumer_cost_original - consumer_cost_adjusted)
         ),
         "output_csv_gz": str(OUTPUT_CSV_PATH.resolve()),
+        "output_csv_first_week": str(OUTPUT_FIRST_WEEK_CSV_PATH.resolve()),
     }
 
     OUTPUT_SUMMARY_JSON_PATH.write_text(
@@ -1367,7 +1566,9 @@ def main() -> None:
 
     print("Joint 2020 consumer-grid simulation complete.")
     print(f"Rows written: {summary['rows_output']}")
+    print(f"First-week rows written: {summary['rows_output_first_week']}")
     print(f"Output CSV: {OUTPUT_CSV_PATH}")
+    print(f"First-week CSV: {OUTPUT_FIRST_WEEK_CSV_PATH}")
     print(f"Summary JSON: {OUTPUT_SUMMARY_JSON_PATH}")
     print(
         "Consumer cost (USD): "
