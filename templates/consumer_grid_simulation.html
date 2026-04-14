@@ -1,0 +1,287 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Consumer Grid Week Simulation</title>
+  <style>
+    :root {
+      --bg: #f7f8fa;
+      --surface: #ffffff;
+      --surface-border: #d9dde4;
+      --text: #1f2937;
+      --muted: #556070;
+      --accent: #2563eb;
+      --accent-dark: #1d4ed8;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: sans-serif;
+      line-height: 1.4;
+    }
+
+    .page {
+      max-width: 1280px;
+      margin: 0 auto;
+      padding: 1rem;
+      display: grid;
+      gap: 1rem;
+      grid-template-columns: minmax(280px, 370px) 1fr;
+    }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--surface-border);
+      border-radius: 0;
+      padding: 1rem;
+    }
+
+    h1 {
+      margin-top: 0;
+      margin-bottom: 0.75rem;
+      font-size: 1.3rem;
+    }
+
+    h2 {
+      margin: 0;
+      font-size: 1rem;
+    }
+
+    .subtitle {
+      margin-top: 0;
+      color: var(--muted);
+      font-size: 0.92rem;
+    }
+
+    .controls-grid {
+      display: grid;
+      gap: 0.75rem;
+      grid-template-columns: 1fr;
+    }
+
+    .field {
+      display: grid;
+      gap: 0.25rem;
+    }
+
+    label {
+      font-size: 0.9rem;
+      font-weight: 600;
+    }
+
+    input,
+    select,
+    button {
+      width: 100%;
+      padding: 0.5rem 0.6rem;
+      border: 1px solid #c4cada;
+      border-radius: 0;
+      background: #fff;
+      color: var(--text);
+      font-size: 0.92rem;
+    }
+
+    button {
+      cursor: pointer;
+      font-weight: 600;
+      border: none;
+      color: #fff;
+      background: var(--accent);
+    }
+
+    button:hover {
+      background: var(--accent-dark);
+    }
+
+    .results {
+      display: grid;
+      gap: 1rem;
+      grid-template-columns: 1fr;
+    }
+
+    .metrics {
+      display: grid;
+      gap: 0.8rem;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    }
+
+    .metric-item {
+      border: 1px solid var(--surface-border);
+      border-radius: 0;
+      padding: 0.7rem;
+      background: #fbfcfe;
+    }
+
+    .metric-label {
+      margin: 0 0 0.25rem;
+      font-size: 0.82rem;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.02em;
+    }
+
+    .metric-value {
+      margin: 0;
+      font-size: 1.05rem;
+      font-weight: 700;
+    }
+
+    .status {
+      margin: 0;
+      color: var(--muted);
+      min-height: 1.2rem;
+    }
+
+    .plot-card img {
+      width: 100%;
+      height: auto;
+      border-radius: 0;
+      border: 1px solid var(--surface-border);
+      background: #fff;
+    }
+
+    .hidden {
+      display: none;
+    }
+
+    @media (max-width: 960px) {
+      .page {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <section class="card">
+      <h1>Consumer Grid Week Simulation</h1>
+      <p class="subtitle">
+        Run a one-week simulation for 2020 with configurable numeric policy and response values.
+      </p>
+
+      <form id="simulation-form">
+        <div class="controls-grid">
+          <div class="field">
+            <label for="week_number">Week</label>
+            <select id="week_number" name="week_number" required>
+              {% for week in week_options %}
+              <option value="{{ week.number }}">
+                Week {{ week.number }} ({{ week.start }} to {{ week.end }})
+              </option>
+              {% endfor %}
+            </select>
+          </div>
+
+          {% for option in option_specs %}
+          <div class="field">
+            <label for="{{ option.key }}">{{ option.label }}</label>
+            <input
+              id="{{ option.key }}"
+              name="{{ option.key }}"
+              type="number"
+              min="{{ option.min }}"
+              max="{{ option.max }}"
+              step="{{ option.step }}"
+              value="{{ default_options[option.key] }}"
+              required
+            >
+          </div>
+          {% endfor %}
+
+          <button type="submit">Run Week Simulation</button>
+          <p class="status" id="status-text"></p>
+        </div>
+      </form>
+    </section>
+
+    <section class="results">
+      <article class="card">
+        <h2>Cost Results</h2>
+        <div class="metrics">
+          <div class="metric-item">
+            <p class="metric-label">Consumer Cost Savings</p>
+            <p class="metric-value" id="consumer-savings">-</p>
+          </div>
+          <div class="metric-item">
+            <p class="metric-label">Grid Cost Savings</p>
+            <p class="metric-value" id="grid-savings">-</p>
+          </div>
+        </div>
+      </article>
+
+      <article class="card plot-card">
+        <h2>Grid Demand Figure</h2>
+        <img id="grid-demand-image" class="hidden" alt="Grid demand week figure">
+      </article>
+
+      <article class="card plot-card">
+        <h2>Consumer Action Figure</h2>
+        <img id="consumer-action-image" class="hidden" alt="Consumer action week figure">
+      </article>
+    </section>
+  </main>
+
+  <script>
+    const optionSpecs = {{ option_specs | tojson }};
+    const statusText = document.getElementById("status-text");
+
+    const consumerSavings = document.getElementById("consumer-savings");
+    const gridSavings = document.getElementById("grid-savings");
+
+    const gridDemandImage = document.getElementById("grid-demand-image");
+    const consumerActionImage = document.getElementById("consumer-action-image");
+    const formatter = new Intl.NumberFormat("en-US", {
+      style: "currency",
+      currency: "USD",
+      maximumFractionDigits: 2
+    });
+
+    document.getElementById("simulation-form").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      statusText.textContent = "Running simulation...";
+
+      const form = event.currentTarget;
+      const payload = {
+        week_number: Number(form.week_number.value)
+      };
+
+      for (const option of optionSpecs) {
+        payload[option.key] = Number(form[option.key].value);
+      }
+
+      try {
+        const response = await fetch("/api/simulate-week", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify(payload)
+        });
+        const data = await response.json();
+        if (!response.ok) {
+          throw new Error(data.error || "Simulation request failed.");
+        }
+
+        consumerSavings.textContent = formatter.format(data.consumer_cost.savings_usd);
+        gridSavings.textContent = formatter.format(data.grid_cost.savings_usd);
+
+        gridDemandImage.src = data.figures.grid_demand_png_data_url;
+        consumerActionImage.src = data.figures.consumer_action_png_data_url;
+        gridDemandImage.classList.remove("hidden");
+        consumerActionImage.classList.remove("hidden");
+
+        statusText.textContent = `Week ${data.week_number} complete (${data.row_count} rows).`;
+      } catch (error) {
+        statusText.textContent = error.message;
+      }
+    });
+  </script>
+</body>
+</html>
