@@ -361,7 +361,14 @@ def build_model_from_checkpoint(checkpoint: dict, device: torch.device) -> Share
     ).to(device)
     model.load_state_dict(checkpoint["model_state_dict"])
     model.eval()
-    model = torch.compile(model)
+    can_compile = False
+    if torch.cuda.is_available():
+        device_index = torch.cuda.current_device()
+        capability = torch.cuda.get_device_capability(device_index)
+        if capability >= (7, 0):
+            can_compile = True
+    if can_compile:
+        model = torch.compile(model)
     return model
 
 

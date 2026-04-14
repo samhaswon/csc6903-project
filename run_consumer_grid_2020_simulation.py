@@ -1213,8 +1213,17 @@ def load_grid_transformer_for_frequency(
         dropout=float(artifact["model_params"]["dropout"]),
     ).to(device)
     model.load_state_dict(artifact["best_state_dict"])
-    model = torch.compile(model)
+
+    can_compile = False
+    if torch.cuda.is_available():
+        device_index = torch.cuda.current_device()
+        capability = torch.cuda.get_device_capability(device_index)
+        if capability >= (7, 0):
+            can_compile = True
+    if can_compile:
+        model = torch.compile(model)
     model.eval()
+
     return model, float(artifact["feature_mean"]), float(artifact["feature_std"])
 
 
