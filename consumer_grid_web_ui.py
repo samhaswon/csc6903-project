@@ -7,7 +7,9 @@ import argparse
 import base64
 import io
 import json
+import os
 import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -29,6 +31,8 @@ import matplotlib.pyplot as plt  # noqa: E402
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent
+STATIC_ROOT = PROJECT_ROOT / "static"
+TEMPLATE_ROOT = PROJECT_ROOT / "templates"
 WEEK_DURATION = pd.Timedelta(days=7)
 
 AGGREGATE_COLUMNS = [
@@ -274,6 +278,34 @@ def _load_grid_frame_for_year() -> pd.DataFrame:
     return frame
 
 
+def _load_house_cache_entry(
+    house: str,
+    consumer_context: sim.ConsumerInferenceContext,
+) -> tuple[str, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """Load cached inference and end-use inputs for one house.
+
+    :param house: House identifier.
+    :param consumer_context: Shared consumer inference context.
+    :return: House id, raw frame, processed frame, and end-use frame.
+    """
+    raw_frame, processed_frame = sim.preprocess_house_for_inference(
+        energy_path=sim.CONSUMER_DATA_DIR / f"{house}_Wh.csv",
+        weather=consumer_context.weather_frame,
+        feature_columns=consumer_context.feature_columns,
+    )
+    raw_frame = raw_frame.copy()
+    raw_frame.columns = [column.strip() for column in raw_frame.columns]
+    raw_frame["timestamp_utc"] = pd.to_datetime(raw_frame["date"], errors="coerce", utc=True)
+
+    processed_frame = processed_frame.copy()
+    processed_frame["timestamp_utc"] = pd.to_datetime(
+        processed_frame["date"], errors="coerce", utc=True
+    )
+
+    end_use_frame = sim.load_house_end_use_frame(house=house)
+    return house, raw_frame, processed_frame, end_use_frame
+
+
 def _load_cache() -> CachedSimulationData:
     """Load reusable model/state data into process memory.
 
@@ -297,23 +329,21 @@ def _load_cache() -> CachedSimulationData:
 
         house_inference_data: dict[str, tuple[pd.DataFrame, pd.DataFrame]] = {}
         house_end_use_frame: dict[str, pd.DataFrame] = {}
-        for house in tqdm(sim.HOUSE_IDS, desc="Preloading house data", unit="house"):
-            raw_frame, processed_frame = sim.preprocess_house_for_inference(
-                energy_path=sim.CONSUMER_DATA_DIR / f"{house}_Wh.csv",
-                weather=consumer_context.weather_frame,
-                feature_columns=consumer_context.feature_columns,
-            )
-            raw_frame = raw_frame.copy()
-            raw_frame.columns = [column.strip() for column in raw_frame.columns]
-            raw_frame["timestamp_utc"] = pd.to_datetime(
-                raw_frame["date"], errors="coerce", utc=True
-            )
-            processed_frame = processed_frame.copy()
-            processed_frame["timestamp_utc"] = pd.to_datetime(
-                processed_frame["date"], errors="coerce", utc=True
-            )
-            house_inference_data[house] = (raw_frame, processed_frame)
-            house_end_use_frame[house] = sim.load_house_end_use_frame(house=house)
+        max_workers = min(len(sim.HOUSE_IDS), max(1, (os.cpu_count() or 1)))
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = [
+                executor.submit(_load_house_cache_entry, house, consumer_context)
+                for house in sim.HOUSE_IDS
+            ]
+            for future in tqdm(
+                as_completed(futures),
+                total=len(futures),
+                desc="Preloading house data",
+                unit="house",
+            ):
+                house, raw_frame, processed_frame, end_use_frame = future.result()
+                house_inference_data[house] = (raw_frame, processed_frame)
+                house_end_use_frame[house] = end_use_frame
 
         _CACHE = CachedSimulationData(
             consumer_context=consumer_context,
@@ -805,6 +835,8 @@ def _run_week_simulation(
     consumer_adjusted_total = float(np.nansum(consumer_cost_adjusted))
     grid_original_total = float(np.nansum(grid_cost_original))
     grid_adjusted_total = float(np.nansum(grid_cost_adjusted))
+    power_difference_mw = float(np.nansum(grid_delta_mw))
+    average_consumer_savings_usd = float(np.nanmean(consumer_cost_original - consumer_cost_adjusted))
 
     plot_frame = plot_helpers.add_plot_columns(week_frame)
     grid_demand_plot = _figure_grid_demand_base64(plot_frame, week_number=week_number)
@@ -825,12 +857,16 @@ def _run_week_simulation(
             "adjusted_usd": consumer_adjusted_total,
             "difference_usd": consumer_adjusted_total - consumer_original_total,
             "savings_usd": consumer_original_total - consumer_adjusted_total,
+            "average_savings_usd": average_consumer_savings_usd,
         },
         "grid_cost": {
             "original_usd": grid_original_total,
             "adjusted_usd": grid_adjusted_total,
             "difference_usd": grid_adjusted_total - grid_original_total,
             "savings_usd": grid_original_total - grid_adjusted_total,
+        },
+        "power": {
+            "difference_mw": power_difference_mw,
         },
         "figures": {
             "grid_demand_png_data_url": grid_demand_plot,
@@ -859,7 +895,14 @@ def _build_week_options(
     return output
 
 
-APP = Flask(__name__, template_folder=str(PROJECT_ROOT / "templates"))
+APP = Flask(
+    __name__,
+    template_folder=str(TEMPLATE_ROOT),
+    static_folder=str(STATIC_ROOT),
+    static_url_path="/static",
+)
+APP.config["TEMPLATES_AUTO_RELOAD"] = True
+APP.jinja_env.auto_reload = True
 
 
 @APP.get("/")
@@ -944,14 +987,14 @@ def _parse_args() -> argparse.Namespace:
 def main() -> None:
     """Run the web server in development or production mode."""
     args = _parse_args()
-    _load_cache()
     if args.prod:
+        _load_cache()
         # pylint: disable=import-outside-toplevel
         from waitress import serve
 
         serve(APP, host=args.host, port=args.port, threads=2)
         return
-    APP.run(host=args.host, port=args.port, debug=False)
+    APP.run(host=args.host, port=args.port, debug=True, use_reloader=True)
 
 
 if __name__ == "__main__":
