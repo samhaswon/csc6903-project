@@ -237,6 +237,10 @@
       cursor: pointer;
     }
 
+    .plot-card img.is-running {
+      opacity: 0.7;
+    }
+
     .hidden {
       display: none;
     }
@@ -342,6 +346,7 @@
 
     const gridDemandImage = document.getElementById("grid-demand-image");
     const consumerActionImage = document.getElementById("consumer-action-image");
+    const resultImages = [gridDemandImage, consumerActionImage];
     const formatter = new Intl.NumberFormat("en-US", {
       style: "currency",
       currency: "USD",
@@ -407,6 +412,11 @@
       statusText.textContent = "Running simulation...";
       statusText.classList.add("status-running");
       resultCards.forEach((card) => card.classList.add("card-running"));
+      resultImages.forEach((imageElement) => {
+        if (!imageElement.classList.contains("hidden")) {
+          imageElement.classList.add("is-running");
+        }
+      });
 
       const form = event.currentTarget;
       const payload = {
@@ -439,8 +449,8 @@
         setMetricSign(gridSavingsCard, data.grid_cost.savings_usd);
         setMetricSign(powerDifferenceCard, data.power.difference_mw);
 
-        gridDemandImage.src = data.figures.grid_demand_png_data_url;
-        consumerActionImage.src = data.figures.consumer_action_png_data_url;
+        gridDemandImage.src = data.figures.grid_demand_svg_data_url;
+        consumerActionImage.src = data.figures.consumer_action_svg_data_url;
         gridDemandImage.classList.remove("hidden");
         consumerActionImage.classList.remove("hidden");
 
@@ -450,6 +460,7 @@
       } finally {
         statusText.classList.remove("status-running");
         resultCards.forEach((card) => card.classList.remove("card-running"));
+        resultImages.forEach((imageElement) => imageElement.classList.remove("is-running"));
       }
     });
   </script>

@@ -4,14 +4,15 @@
 from __future__ import annotations
 
 import argparse
-import base64
 import io
 import json
 import os
 import threading
+from urllib.parse import quote
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
+import time
 from typing import Any
 
 import matplotlib
@@ -553,12 +554,12 @@ def _get_house_end_use_frame_for_week(
     return cache.house_end_use_week_frames[cache_key].copy()
 
 
-def _figure_grid_demand_base64(frame: pd.DataFrame, week_number: int) -> str:
-    """Render grid-demand figure and return a base64 data URL.
+def _figure_grid_demand_svg_data_url(frame: pd.DataFrame, week_number: int) -> str:
+    """Render grid-demand figure and return an SVG data URL.
 
     :param frame: Week frame with plotting columns.
     :param week_number: UI week number.
-    :return: PNG data URL string.
+    :return: SVG data URL string.
     """
     timestamps = frame["timestamp_utc"]
     figure, axis = plt.subplots(1, 1, figsize=plot_helpers.FIGSIZE, constrained_layout=True)
@@ -593,20 +594,18 @@ def _figure_grid_demand_base64(frame: pd.DataFrame, week_number: int) -> str:
     axis.grid(alpha=0.25)
     plot_helpers.apply_time_axis(axis)
 
-    image = io.BytesIO()
-    figure.savefig(image, dpi=200, format="png")
+    image = io.StringIO()
+    figure.savefig(image, format="svg")
     plt.close(figure)
-    image.seek(0)
-    encoded = base64.b64encode(image.read()).decode("ascii")
-    return f"data:image/png;base64,{encoded}"
+    return f"data:image/svg+xml;charset=utf-8,{quote(image.getvalue())}"
 
 
-def _figure_consumer_action_base64(frame: pd.DataFrame, week_number: int) -> str:
-    """Render consumer-action figure and return a base64 data URL.
+def _figure_consumer_action_svg_data_url(frame: pd.DataFrame, week_number: int) -> str:
+    """Render consumer-action figure and return an SVG data URL.
 
     :param frame: Week frame with plotting columns.
     :param week_number: UI week number.
-    :return: PNG data URL string.
+    :return: SVG data URL string.
     """
     timestamps = frame["timestamp_utc"]
     figure, axis = plt.subplots(1, 1, figsize=plot_helpers.FIGSIZE, constrained_layout=True)
@@ -638,12 +637,10 @@ def _figure_consumer_action_base64(frame: pd.DataFrame, week_number: int) -> str
     axis.grid(alpha=0.25)
     plot_helpers.apply_time_axis(axis)
 
-    image = io.BytesIO()
-    figure.savefig(image, dpi=200, format="png")
+    image = io.StringIO()
+    figure.savefig(image, format="svg")
     plt.close(figure)
-    image.seek(0)
-    encoded = base64.b64encode(image.read()).decode("ascii")
-    return f"data:image/png;base64,{encoded}"
+    return f"data:image/svg+xml;charset=utf-8,{quote(image.getvalue())}"
 
 
 def _run_week_simulation(
@@ -661,6 +658,8 @@ def _run_week_simulation(
     # pylint: disable=too-many-locals,too-many-statements
     if week_number < 1 or week_number > len(cache.week_ranges):
         raise ValueError(f"week_number must be between 1 and {len(cache.week_ranges)}.")
+    
+    sim_start = time.perf_counter()
 
     _apply_numeric_options(options)
     week_start, week_end = cache.week_ranges[week_number - 1]
@@ -839,8 +838,13 @@ def _run_week_simulation(
     average_consumer_savings_usd = float(np.nanmean(consumer_cost_original - consumer_cost_adjusted))
 
     plot_frame = plot_helpers.add_plot_columns(week_frame)
-    grid_demand_plot = _figure_grid_demand_base64(plot_frame, week_number=week_number)
-    consumer_action_plot = _figure_consumer_action_base64(plot_frame, week_number=week_number)
+    grid_demand_plot = _figure_grid_demand_svg_data_url(plot_frame, week_number=week_number)
+    consumer_action_plot = _figure_consumer_action_svg_data_url(
+        plot_frame,
+        week_number=week_number,
+    )
+    sim_end = time.perf_counter()
+    print(f"Week {week_number} simulation completed in {sim_end - sim_start:.2f} seconds.")
 
     return {
         "week_number": week_number,
@@ -869,8 +873,8 @@ def _run_week_simulation(
             "difference_mw": power_difference_mw,
         },
         "figures": {
-            "grid_demand_png_data_url": grid_demand_plot,
-            "consumer_action_png_data_url": consumer_action_plot,
+            "grid_demand_svg_data_url": grid_demand_plot,
+            "consumer_action_svg_data_url": consumer_action_plot,
         },
     }
 
