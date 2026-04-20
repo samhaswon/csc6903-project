@@ -263,8 +263,18 @@
       <form id="simulation-form">
         <div class="controls-grid">
           <div class="field">
-            <label for="week_number">Week</label>
-            <select id="week_number" name="week_number" required>
+            <label
+              for="week_number"
+              title="Select which seven-day period of 2020 to simulate."
+            >
+              Week
+            </label>
+            <select
+              id="week_number"
+              name="week_number"
+              title="Select which seven-day period of 2020 to simulate."
+              required
+            >
               {% for week in week_options %}
               <option value="{{ week.number }}">
                 Week {{ week.number }} ({{ week.start }} to {{ week.end }})
@@ -275,11 +285,14 @@
 
           {% for option in option_specs %}
           <div class="field">
-            <label for="{{ option.key }}">{{ option.label }}</label>
+            <label for="{{ option.key }}" title="{{ option.description }}">
+              {{ option.label }}
+            </label>
             <input
               id="{{ option.key }}"
               name="{{ option.key }}"
               type="number"
+              title="{{ option.description }}"
               min="{{ option.min }}"
               max="{{ option.max }}"
               step="{{ option.step }}"
@@ -441,7 +454,9 @@
         }
 
         consumerSavings.textContent = formatter.format(data.consumer_cost.savings_usd);
-        consumerAverageSavings.textContent = formatter.format(data.consumer_cost.average_savings_usd);
+        consumerAverageSavings.textContent = formatter.format(
+          data.consumer_cost.average_savings_usd
+        );
         gridSavings.textContent = formatter.format(data.grid_cost.savings_usd);
         powerDifference.textContent = `${data.power.difference_mw.toFixed(3)} MWh`;
         setMetricSign(consumerSavingsCard, data.consumer_cost.savings_usd);

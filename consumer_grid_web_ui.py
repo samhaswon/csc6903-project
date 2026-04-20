@@ -60,6 +60,7 @@ class NumericOptionSpec:
 
     key: str
     label: str
+    description: str
     module_var: str
     min_value: float
     max_value: float
@@ -70,6 +71,7 @@ NUMERIC_OPTION_SPECS = (
     NumericOptionSpec(
         key="consumer_group_multiplier",
         label="Consumer Group Multiplier",
+        description="Scales the simulated households up to the represented consumer group size.",
         module_var="CONSUMER_GROUP_MULTIPLIER",
         min_value=1.0,
         max_value=1_000_000.0,
@@ -78,6 +80,7 @@ NUMERIC_OPTION_SPECS = (
     NumericOptionSpec(
         key="action_effectiveness_prob",
         label="Action Effectiveness Probability",
+        description="Probability that a triggered load-shifting action actually takes effect.",
         module_var="ACTION_EFFECTIVENESS_PROB",
         min_value=0.0,
         max_value=1.0,
@@ -86,6 +89,7 @@ NUMERIC_OPTION_SPECS = (
     NumericOptionSpec(
         key="peak_load_quantile",
         label="Peak Load Quantile",
+        description="Quantile used to define which minutes count as peak-load periods.",
         module_var="PEAK_LOAD_QUANTILE",
         min_value=0.0,
         max_value=1.0,
@@ -94,6 +98,7 @@ NUMERIC_OPTION_SPECS = (
     NumericOptionSpec(
         key="expensive_price_quantile",
         label="Expensive Price Quantile",
+        description="Quantile used to mark electricity price periods as expensive.",
         module_var="EXPENSIVE_PRICE_QUANTILE",
         min_value=0.0,
         max_value=1.0,
@@ -102,6 +107,7 @@ NUMERIC_OPTION_SPECS = (
     NumericOptionSpec(
         key="cheap_price_quantile",
         label="Cheap Price Quantile",
+        description="Quantile used to mark electricity price periods as cheap.",
         module_var="CHEAP_PRICE_QUANTILE",
         min_value=0.0,
         max_value=1.0,
@@ -110,6 +116,7 @@ NUMERIC_OPTION_SPECS = (
     NumericOptionSpec(
         key="min_actionable_reduction_wh",
         label="Min Actionable Reduction (Wh)",
+        description="Minimum load reduction required before the simulation will trigger an action.",
         module_var="MIN_ACTIONABLE_REDUCTION_WH",
         min_value=0.0,
         max_value=10_000.0,
@@ -118,6 +125,7 @@ NUMERIC_OPTION_SPECS = (
     NumericOptionSpec(
         key="max_consumption_reduction_frac",
         label="Max Consumption Reduction Fraction",
+        description="Upper bound on how much predicted consumption can be reduced in one minute.",
         module_var="MAX_CONSUMPTION_REDUCTION_FRAC",
         min_value=0.0,
         max_value=1.0,
@@ -126,6 +134,7 @@ NUMERIC_OPTION_SPECS = (
     NumericOptionSpec(
         key="shiftable_reduction_fraction",
         label="Shiftable Reduction Fraction",
+        description="Fraction of shiftable load that can be deferred during an action.",
         module_var="SHIFTABLE_REDUCTION_FRACTION",
         min_value=0.0,
         max_value=1.0,
@@ -134,6 +143,7 @@ NUMERIC_OPTION_SPECS = (
     NumericOptionSpec(
         key="battery_support_net_load_frac",
         label="Battery Support Net-Load Fraction",
+        description="Maximum battery support per minute as a fraction of predicted consumption.",
         module_var="BATTERY_SUPPORT_NET_LOAD_FRAC",
         min_value=0.0,
         max_value=1.0,
@@ -142,6 +152,7 @@ NUMERIC_OPTION_SPECS = (
     NumericOptionSpec(
         key="grid_freq_response_hz_per_mw",
         label="Grid Frequency Response (Hz per MW)",
+        description="Assumed frequency change per MW of net-load change.",
         module_var="GRID_FREQ_RESPONSE_HZ_PER_MW",
         min_value=0.0,
         max_value=0.01,
@@ -835,7 +846,9 @@ def _run_week_simulation(
     grid_original_total = float(np.nansum(grid_cost_original))
     grid_adjusted_total = float(np.nansum(grid_cost_adjusted))
     power_difference_mw = float(np.nansum(grid_delta_mw))
-    average_consumer_savings_usd = float(np.nanmean(consumer_cost_original - consumer_cost_adjusted))
+    average_consumer_savings_usd = float(
+        np.nanmean(consumer_cost_original - consumer_cost_adjusted)
+    )
 
     plot_frame = plot_helpers.add_plot_columns(week_frame)
     grid_demand_plot = _figure_grid_demand_svg_data_url(plot_frame, week_number=week_number)
@@ -920,6 +933,7 @@ def index() -> str:
         {
             "key": spec.key,
             "label": spec.label,
+            "description": spec.description,
             "min": spec.min_value,
             "max": spec.max_value,
             "step": spec.step,
