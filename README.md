@@ -1,5 +1,7 @@
 # csc6903-project
 
+![Example grid simulation](./demo_images/main_demo.png)
+
 This repository has submodules, so clone with:
 ```bash
 git clone --recurse-submodules https://github.com/samhaswon/csc6903-project
